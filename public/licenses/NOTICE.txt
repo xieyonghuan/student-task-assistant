@@ -1,0 +1,31 @@
+Third-party components used by Shike Study Task Assistant:
+
+Tesseract.js 7.0.0 and tesseract.js-core 7.0.0
+https://github.com/naptha/tesseract.js
+https://github.com/naptha/tesseract.js-core
+License: Apache-2.0. License texts are included alongside this file.
+The OCR worker also has a worker.min.js.LICENSE.txt companion file.
+
+chi_sim and eng language data, @tesseract.js-data version 1.0.0
+https://github.com/naptha/tessdata
+The npm data wrapper packages declare MIT; the trained model data originates
+from Tesseract's tessdata_best integer models (Apache-2.0 upstream).
+https://github.com/tesseract-ocr/tessdata_best
+
+The rest of the dependency inventory and exact integrity hashes are recorded
+in package-lock.json. No external services are used during OCR processing.
+
+Vosk-Browser 0.0.8, copyright Ciaran O'Reilly and upstream Vosk contributors.
+https://github.com/ccoreilly/vosk-browser
+https://github.com/alphacep/vosk-api
+License: Apache-2.0 (same license text included in this directory).
+Shike modifications: extract the bundled worker to a same-origin static file
+and add an explicit acknowledgement for the final recognition result. Model
+archives persist in Shike CacheStorage; unpacked models stay in worker memory
+instead of the library's legacy IndexedDB filesystem.
+
+Chinese voice model: vosk-model-small-cn-0.22, Alpha Cephei, Apache-2.0.
+https://alphacephei.com/vosk/models
+Original ZIP SHA256:
+3af8b0e7e0f835ae9d414ce5df580237a3cfb08d586c9fbbb0f7ff29ad5b14ba
+Only the generic model is cached. Microphone recordings are never persisted.

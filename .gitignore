@@ -31,3 +31,12 @@ Desktop.ini
 /local-data/
 /private/
 *.ics
+
+# Generated local OCR runtime and model files (rebuilt from locked packages)
+/public/ocr/
+/public/voice/
+/test-results/
+/playwright-report/
+
+# Local test notifications and screenshots
+/tests/fixtures/local/

@@ -1,0 +1,436 @@
+import './style.css';
+import { version as APP_VERSION } from '../package.json';
+import { installState, installApp, onInstallChange } from './install.js';
+import { PAGES, readRoute, renderLearningPage } from './pages.js';
+import { newId, extractTasks, findDuplicates, sanitizeTask, validateTask, taskGroup, dueTimestamp, sortTasks, REMINDERS, localDate } from './domain.js';
+import { loadTasks, putTask, deleteTask, parseBackup, restoreTasks } from './storage.js';
+import { createCalendar } from './calendar.js';
+import { registerOffline, offlineStatus, prepareOffline } from './offline.js';
+
+const $ = (s, root = document) => root.querySelector(s);
+const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const paths = {
+  home: '<path d="m3 10 9-7 9 7v10H4V10m5 10v-7h6v7"/>',
+  mic: '<rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-4 0h8"/>',
+  stop: '<rect x="5" y="5" width="14" height="14" rx="3"/>',
+  book: '<path d="M4 4h11a5 5 0 0 1 5 5v11H9a5 5 0 0 1-5-5z"/><path d="M8 4v16m4-10 2 2 4-5"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  alert: '<path d="m12 3 10 17H2zM12 9v4m0 3v1"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18m-13 5h2m4 0h2"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
+  circle: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+  inbox: '<path d="M4 5h16v14H4zM4 13h5l1 3h4l1-3h5"/>',
+  upload: '<path d="M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  scan: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M6 12h12M8 8h8m-8 8h5"/>',
+  shield: '<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6z"/><path d="m8 12 3 3 5-6"/>',
+  settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/>',
+  download: '<path d="M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4"/>',
+  search: '<circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/>',
+  arrow: '<path d="M4 12h16m-6-6 6 6-6 6"/>',
+  close: '<path d="m6 6 12 12M6 18 18 6"/>',
+  edit: '<path d="m14 5 5 5M4 20l5-1L21 7l-5-5L4 14z"/>',
+  trash: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/>',
+  undo: '<path d="M8 4 3 9l5 5M3 9h11a7 7 0 1 1 0 14"/>',
+  spark: '<path d="m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 6-6 4 4 3-3 5 5"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9 9a3 3 0 1 1 5 2c-2 1-2 2-2 3m0 3v.1"/>',
+};
+const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.book}</svg>`;
+const state = { tasks: [], view: readRoute(), query: '', offlineReady: false, resourceBytes: 0, storageError: false };
+let toastTimer;
+const savingIds = new Set();
+function toast(message, error = false) {
+  const el = $('#toast'); el.textContent = message; el.className = `visible${error ? ' error' : ''}`;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.className = ''; }, error ? 7000 : 4000);
+}
+async function reloadTasks() { state.tasks = await loadTasks(); render(); }
+async function safely(action) { try { await action(); } catch (e) { toast(e.message || '操作未完成，请重试。', true); } }
+function counts() {
+  const result = { all: 0, scheduled: 0, upcoming: 0, overdue: 0, undated: 0, completed: 0 };
+  for (const task of state.tasks) { const group = taskGroup(task); result[group]++; if (group !== 'completed') result.all++; }
+  return result;
+}
+function navItem(view, label, symbol, count) {
+  return `<button class="nav-item ${state.view === view ? 'active' : ''}" data-view="${view}" aria-label="${label}${count === null ? '' : `，${count} 项`}" ${state.view === view ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span>${count === null ? '' : `<span class="nav-count">${count}</span>`}</button>`;
+}
+function render() {
+  const n = counts();
+  const page = PAGES[state.view];
+  const installed = installState().installed;
+  document.title = `${page.title} · 拾课`;
+  const date = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date());
+  $('#app').innerHTML = `<div class="app-shell">
+    <aside class="sidebar glass"><a class="brand" href="#/home" aria-label="拾课首页"><span class="brand-mark">${icon('book')}</span><span>拾课<small>STUDY SPACE</small></span></a>
+      <p class="nav-caption">我的学习</p><nav aria-label="任务分类">
+        ${navItem('home', '首页', 'home', null)}
+        ${navItem('all', '全部待办', 'grid', n.all)}${navItem('upcoming', '即将截止', 'clock', n.upcoming)}${navItem('overdue', '已逾期', 'alert', n.overdue)}${navItem('undated', '暂无截止日期', 'inbox', n.undated)}
+        <div class="nav-divider"></div>${navItem('completed', '已完成', 'circle', n.completed)}
+      </nav>
+      <div class="sidebar-bottom"><div class="offline-card"><span class="status-dot ${state.offlineReady ? 'ready' : ''}"></span><strong>${state.offlineReady ? '离线资源已就绪' : '准备你的离线空间'}</strong><p>${state.offlineReady ? '识别与任务管理，无需联网' : '首次准备后，断网也能识别'}</p><button class="text-button" data-action="settings">${state.offlineReady ? '管理本地数据' : '准备离线使用'} ${icon('arrow')}</button></div>
+      <button class="nav-item settings-nav" data-action="settings" aria-label="设置与帮助">${icon('settings')}<span>设置与帮助</span></button><div class="sidebar-foot">只留在你的设备上 ${icon('shield')}</div></div>
+    </aside>
+    <main class="workspace" data-page="${state.view}"><header class="topbar"><span class="breadcrumb">我的学习空间 <span>/</span> ${page.title}</span><div class="topbar-actions"><span class="privacy-badge">${icon('shield')} 本地私密存储</span><button class="button button-light install-button" data-action="install" ${installed ? 'disabled' : ''}>${icon('download')}<span>${installed ? '已安装到桌面' : '安装到桌面'}</span></button><button class="avatar" data-action="settings" aria-label="打开设置">学</button></div></header>
+      <section class="page-heading"><div><p class="eyebrow">${esc(date)}</p><h1>${page.title}</h1><p class="page-subtitle">${page.subtitle}</p></div>${state.view === 'home' ? `<button class="button button-light" data-view="all">${icon('calendar')} 查看全部待办</button>` : `<button class="button button-light" data-action="add">${icon('plus')} 手动添加</button>`}</section>
+      ${state.storageError ? '<div class="error-banner" role="alert">无法打开本地存储。请退出无痕模式、检查存储空间后重新打开。本次无法保存任务。</div>' : ''}
+      ${renderLearningPage(state, n, icon, esc)}
+
+
+      <footer class="workspace-foot"><span>${icon('shield')} 安心学习，数据只属于你</span><span>拾课 · 学习任务助手</span></footer>
+    </main></div>`;
+  renderTaskList();
+  $('#task-search')?.addEventListener('input', event => { state.query = event.target.value; renderTaskList(); });
+}
+
+function dueLabel(task) {
+  if (!task.dueDate) return '暂无截止日期';
+  const [year, month, day] = task.dueDate.split('-');
+  return `${year === String(new Date().getFullYear()) ? '' : `${year}年`}${Number(month)}月${Number(day)}日 · ${task.dueTime || '00:00（仅日期）'}`;
+}
+function taskCard(task) {
+  const completed = !!task.completedAt;
+  return `<article class="task-card ${completed ? 'is-complete' : ''}"><button class="complete-button ${completed ? 'checked' : ''}" data-action="toggle" data-id="${esc(task.id)}" aria-label="${completed ? '恢复任务：' : '标为已完成：'}${esc(task.title)}">${completed ? icon('check') : ''}</button><button class="task-content" data-action="edit" data-id="${esc(task.id)}"><strong>${esc(task.title)}</strong>${task.details ? `<p>${esc(task.details)}</p>` : ''}<span class="due-label ${taskGroup(task) === 'overdue' ? 'is-overdue' : ''}">${icon(task.dueDate ? 'calendar' : 'inbox')}${esc(dueLabel(task))}</span></button><div class="task-card-actions"><button class="icon-button" data-action="edit" data-id="${esc(task.id)}" aria-label="编辑任务：${esc(task.title)}">${icon('edit')}</button><button class="icon-button danger-hover" data-action="delete" data-id="${esc(task.id)}" aria-label="删除任务：${esc(task.title)}">${icon('trash')}</button></div></article>`;
+}
+function renderTaskList() {
+  if (!$('#task-list')) return;
+  const query = state.query.trim().toLowerCase();
+  let tasks = state.tasks.filter(t => (state.view === 'completed' ? !!t.completedAt : !t.completedAt));
+  if (!['all', 'completed'].includes(state.view)) tasks = tasks.filter(t => taskGroup(t) === state.view);
+  if (query) tasks = tasks.filter(t => `${t.title}\n${t.details}`.toLowerCase().includes(query));
+  const list = $('#task-list');
+  if (!tasks.length) {
+    list.innerHTML = `<div class="empty-state"><div class="empty-illustration">${icon(query ? 'search' : state.view === 'completed' ? 'circle' : 'inbox')}<span>✦</span></div><h3>${query ? '没有找到相关任务' : state.view === 'completed' ? '完成的每件事，都会留在这里' : state.view === 'all' ? '第一件小事，从这里开始' : '这里暂时没有任务'}</h3><p>${query ? '换个关键词试试，也可以清空搜索。' : state.view === 'completed' ? '完成任务后点一下圆圈，就能把它收好。' : '上传一张课程截图，或手动记下你的学习安排。'}</p>${query ? '<button class="text-button" data-action="clear-search">清空搜索</button>' : state.view !== 'completed' ? `<button class="button button-light" data-action="add">${icon('plus')} 添加第一项任务</button>` : ''}</div>`;
+    return;
+  }
+  if (state.view === 'all') {
+    const dated = sortTasks(tasks.filter(t => t.dueDate));
+    const dates = [...new Set(dated.map(t => t.dueDate))];
+    const undated = tasks.filter(t => !t.dueDate);
+    list.innerHTML = `<div class="task-timeline" aria-label="按截止日期排列的任务">${dates.map(date => {
+      const entries = dated.filter(t => t.dueDate === date);
+      const [year, month, day] = date.split('-');
+      const group = taskGroup(entries[0]);
+      const label = group === 'overdue' ? '已逾期' : group === 'upcoming' ? '三天内截止' : '计划中';
+      return `<section class="timeline-entry ${group}" data-date="${date}"><div class="timeline-date"><small>${year}年</small><strong>${Number(month)}月${Number(day)}日</strong><span>${label}</span></div><div class="timeline-tasks">${entries.map(taskCard).join('')}</div></section>`;
+    }).join('')}${undated.length ? `<section class="timeline-entry undated" data-date="undated"><div class="timeline-date"><small>稍后安排</small><strong>暂无日期</strong><span>${undated.length} 项任务</span></div><div class="timeline-tasks">${sortTasks(undated).map(taskCard).join('')}</div></section>` : ''}</div>`;
+    return;
+  }
+  const labels = { upcoming: ['三天内截止', '已按截止时间排列'], overdue: ['已逾期', '可以调整日期，重新安排'], undated: ['暂无截止日期', '留一点弹性，也别忘了回来看看'], completed: ['已完成', '已完成任务可以恢复'] };
+  const groups = [state.view];
+  list.innerHTML = groups.map(group => {
+    let entries = tasks.filter(t => taskGroup(t) === group);
+    if (!entries.length) return '';
+    entries = group === 'completed' ? entries.sort((a, b) => b.completedAt.localeCompare(a.completedAt)) : sortTasks(entries);
+    return `<section class="task-group"><div class="group-heading"><h3><span class="group-dot ${group}"></span>${labels[group][0]} <small>${entries.length}</small></h3><span>${labels[group][1]}</span></div>${entries.map(taskCard).join('')}</section>`;
+  }).join('');
+}
+
+function refreshTimedViews() {
+  renderTaskList();
+  const n = counts();
+  $$('.nav-item[data-view]').forEach(button => {
+    const key = button.dataset.view;
+    if (key === 'home') return;
+    $('.nav-count', button).textContent = n[key];
+    button.setAttribute('aria-label', `${PAGES[key].title}，${n[key]} 项`);
+  });
+  $$('[data-count]').forEach(el => { el.textContent = n[el.dataset.count]; });
+}
+
+let dialogCounter = 0;
+function openDialog(title, subtitle, content, { wide = false, onClose } = {}) {
+  const dialog = document.createElement('dialog');
+  dialog.className = `modal glass ${wide ? 'wide-modal' : ''}`;
+  const titleId = `dialog-title-${++dialogCounter}`;
+  dialog.setAttribute('aria-labelledby', titleId);
+  dialog.innerHTML = `<div class="modal-header"><div><h2 id="${titleId}">${esc(title)}</h2>${subtitle ? `<p>${esc(subtitle)}</p>` : ''}</div><button class="icon-button modal-close" aria-label="关闭窗口">${icon('close')}</button></div><div class="modal-body">${content}</div>`;
+  document.body.append(dialog);
+  const close = () => dialog.close();
+  $('.modal-close', dialog).onclick = close;
+  dialog.addEventListener('close', () => { onClose?.(); dialog.remove(); }, { once: true });
+  dialog.showModal();
+  return dialog;
+}
+
+function installHelp() {
+  return openDialog('安装到平板桌面', '先在平板浏览器打开正式 HTTPS 网址，再安装。', `<div class="notice">${icon('home')}<p>在浏览器菜单里选择“安装应用”或“添加到桌面”。不同浏览器的入口名称可能不同。</p></div><p>安装后，先到“设置与帮助”准备离线截图资源；需要语音时，再在首页准备语音资源。</p><p class="install-migration">如果电脑里已有任务：先在电脑的设置中导出备份，再在平板同一应用的设置中恢复。任务不会通过账号自动同步。</p>`);
+}
+onInstallChange(() => {
+  const state = installState();
+  $$('[data-action="install"]').forEach(button => {
+    button.disabled = state.installed;
+    const label = $('span', button);
+    if (label) label.textContent = state.installed ? '已安装到桌面' : '安装到桌面';
+  });
+});
+
+function taskFields(task, prefix = '') {
+  return `<label class="field">任务名称 <span class="required">*</span><input name="title" maxlength="120" required placeholder="例如：完成高等数学第三章习题" value="${esc(task.title)}"></label><div class="date-fields"><label class="field">截止日期<input name="dueDate" type="date" min="1900-01-01" max="2200-12-31" value="${esc(task.dueDate)}"></label><label class="field">具体时间 <span class="optional">可不填</span><input name="dueTime" type="time" value="${esc(task.dueTime)}"></label></div><p class="field-note">${icon('help')} 只选日期时，按当天 00:00 截止。</p><label class="field">具体要求<textarea name="details" rows="5" maxlength="20000" placeholder="记录作业内容、提交要求等…">${esc(task.details)}</textarea></label><p class="form-error" id="${prefix}form-error" role="alert"></p>`;
+}
+function readTaskFields(form, base) {
+  const data = new FormData(form);
+  return { ...base, title: String(data.get('title') || '').trim(), dueDate: String(data.get('dueDate') || ''), dueTime: String(data.get('dueTime') || ''), details: String(data.get('details') || '').trim() };
+}
+function confirmDate(task, callback) {
+  const dialog = openDialog('确认截止日期', `对应任务：${task.title}`, `<div class="notice">${icon('calendar')}<p>${esc(task.dateHint || '请确认此任务的截止日期，或选择暂无截止日期。')}</p></div><label class="field">截止日期<input id="confirm-date" type="date" min="1900-01-01" max="2200-12-31" value="${esc(task.dueDate)}"></label><label class="field">具体时间 <span class="optional">可不填</span><input id="confirm-time" type="time" value="${esc(task.dueTime)}"></label><p class="field-note">只选择日期时，按当天 00:00 截止。</p><p class="form-error" role="alert"></p><div class="modal-actions"><button class="button button-light" id="no-date">暂无截止日期</button><button class="button button-primary" id="choose-date">确认日期</button></div>`);
+  $('#no-date', dialog).onclick = () => { dialog.close(); callback({ ...task, dueDate: '', dueTime: '', dateConfirmed: true }); };
+  $('#choose-date', dialog).onclick = () => {
+    const selected = { ...task, dueDate: $('#confirm-date', dialog).value, dueTime: $('#confirm-time', dialog).value };
+    const error = !selected.dueDate ? '请选择日期，或点击“暂无截止日期”。' : validateTask(selected);
+    if (error) { $('.form-error', dialog).textContent = error; return; }
+    dialog.close(); callback({ ...selected, dateConfirmed: true });
+  };
+}
+function duplicateDialog(task, matches, onDecision) {
+  const dialog = openDialog('可能与已有任务重复', '请选择如何处理这项任务。', `<div class="notice warning">${icon('alert')}<p>准备保存：<strong>${esc(task.title)}</strong></p></div><label class="field">相似的已有任务<select id="duplicate-target">${matches.map(t => `<option value="${esc(t.id)}">${esc(t.title)}${t.completedAt ? '（已完成）' : ''}</option>`).join('')}</select></label><p class="field-note">修改原任务会更新名称、日期和具体要求，并保留原任务的完成状态。</p><div class="stacked-actions"><button class="button button-primary" id="replace-original">修改选中的原任务</button><button class="button button-light" id="save-separate">仍然新增任务</button><button class="text-button" id="skip-duplicate">跳过本项</button></div>`);
+  $('#replace-original', dialog).onclick = () => { const id = $('#duplicate-target', dialog).value; dialog.close(); onDecision('replace', id); };
+  $('#save-separate', dialog).onclick = () => { dialog.close(); onDecision('new'); };
+  $('#skip-duplicate', dialog).onclick = () => { dialog.close(); onDecision('skip'); };
+}
+function saveWithChecks(task, { excludeId, afterSave, onSkip = () => {} } = {}) {
+  if (savingIds.has(task.id)) return;
+  if (state.storageError) { toast('本地存储不可用，暂时无法保存。', true); return; }
+  const error = validateTask(task);
+  if (error) { toast(error, true); return; }
+  if (!task.dateConfirmed) { confirmDate(task, result => saveWithChecks(result, { excludeId, afterSave, onSkip })); return; }
+  const save = (candidate) => safely(async () => {
+    if (savingIds.has(task.id)) return;
+    savingIds.add(task.id);
+    try { await putTask(sanitizeTask(candidate)); await reloadTasks(); afterSave?.(); toast('任务已保存在这台设备上'); }
+    finally { savingIds.delete(task.id); }
+  });
+  const duplicates = findDuplicates(task, state.tasks, excludeId);
+  if (duplicates.length) {
+    duplicateDialog(task, duplicates, (choice, id) => {
+      if (choice === 'skip') { onSkip(); return; }
+      if (choice === 'replace') { const original = state.tasks.find(t => t.id === id); save({ ...task, id, createdAt: original.createdAt, completedAt: original.completedAt }); }
+      else save(task);
+    });
+  } else save(task);
+}
+function editTask(id) {
+  const original = state.tasks.find(t => t.id === id);
+  const task = original ? { ...original, dateConfirmed: true } : { id: newId(), title: '', details: '', dueDate: '', dueTime: '', dateConfirmed: false };
+  const dialog = openDialog(original ? '编辑学习任务' : '记下一件学习小事', '只有任务名称必填，日期和要求都可以稍后补充。', `<form id="task-form">${taskFields(task)}<div class="modal-actions"><button class="button button-light" type="button" id="cancel-edit">取消</button><button class="button button-primary" type="submit">${original ? '保存修改' : '保存任务'}</button></div></form>`);
+  $('#cancel-edit', dialog).onclick = () => dialog.close();
+  $('#task-form', dialog).onsubmit = event => {
+    event.preventDefault();
+    const candidate = readTaskFields(event.currentTarget, task);
+    if (candidate.dueDate) candidate.dateConfirmed = true;
+    const error = validateTask(candidate);
+    if (error) { $('#form-error', dialog).textContent = error; return; }
+    saveWithChecks(candidate, { excludeId: original?.id, afterSave: () => dialog.close() });
+  };
+}
+
+const EXAMPLE = '课程任务通知\n1. 高等数学：完成第三章课后习题\n截止时间：10月30日。请写出计算过程。\n2. 大学英语：提交阅读报告\n请于周五提交，要求不少于300字。\n3. 计算机基础：整理课堂笔记\n要求：总结本章知识点，暂无截止日期。';
+async function startImport(example = false, initialText = '', mode = 'image') {
+  let previewURL, ocrBusy = false, drafts = [], index = 0, saved = 0, skipped = 0, recognize;
+  const dialog = openDialog('把课程通知，变成学习安排', '第一步上传或粘贴通知，第二步逐项核对，确认后才会保存。', `<div class="import-steps"><span class="active"><b>1</b> 导入通知</span><i></i><span><b>2</b> 识别与提取</span><i></i><span><b>3</b> 逐项确认</span></div><div class="import-layout"><section class="source-panel"><h3>课程通知 <span>仅在本地处理</span></h3><input id="screenshot-file" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" hidden><div id="image-drop" class="image-drop" tabindex="0" role="button" aria-label="选择一张课程通知截图"><div id="image-preview"><span class="upload-symbol">${icon('upload')}</span><strong>选择一张课程通知截图</strong><p>点击选择，或将图片拖到这里</p><small>PNG / JPG / WebP · 最大 20 MB</small></div></div><p class="source-note">尽量裁剪至通知正文，文字清晰时识别更准确。</p><label class="field">通知文字 <span class="optional">也可以直接粘贴</span><textarea id="notification-text" rows="7" maxlength="30000" placeholder="识别后的文字会显示在这里。你也可以粘贴通知，再提取任务。">${example ? esc(EXAMPLE) : ''}</textarea></label><button id="extract-tasks" class="button button-light full-width">${icon('spark')} 从文字提取任务</button><p class="source-note">原截图仅用于本次核对，不随任务保存。</p></section><section id="review-panel" class="review-panel"><div class="review-placeholder"><span class="review-placeholder-icon">${icon('scan')}</span><h3>让每一件事，都有着落</h3><p>识别结果会出现在这里。<br>任务名称、截止日期和具体要求，都由你确认。</p><span class="small-chip">${icon('shield')} 没有上传，只有本地识别</span></div></section></div>`, { wide: true, onClose() { recognize?.cancelOCR(); if (previewURL) URL.revokeObjectURL(previewURL); } });
+  const panel = $('#review-panel', dialog);
+  const raw = $('#notification-text', dialog);
+  function showDraft() {
+    if (!dialog.open) return;
+    $$('.import-steps span', dialog).forEach((el, i) => el.classList.toggle('active', i === 2));
+    if (index >= drafts.length) {
+      panel.innerHTML = `<div class="review-placeholder review-done"><span class="success-symbol">${icon('check')}</span><h3>这份通知，整理好了</h3><p>已保存 ${saved} 项，已跳过 ${skipped} 项。<br>新的学习安排已经在任务列表里。</p><button class="button button-primary" id="finish-import">回到我的任务 ${icon('arrow')}</button></div>`;
+      $('#finish-import', panel).onclick = () => { dialog.close(); location.hash = PAGES.all.route; }; return;
+    }
+    const task = drafts[index];
+    panel.innerHTML = `<div class="review-heading"><span class="feature-label">${icon('check')} 逐项确认</span><strong>第 ${index + 1} / ${drafts.length} 项任务</strong></div><div class="review-progress"><i style="width:${index / drafts.length * 100}%"></i></div><p class="review-tip">本地规则提取可能有遗漏，请对照左侧原文检查；缺少的任务可回首页手动添加。</p>${task.dateHint ? `<div class="notice compact">${icon('calendar')}<p>${esc(task.dateHint)}</p></div>` : ''}<form id="review-form">${taskFields(task, 'review-')}<div class="review-actions"><button class="text-button" type="button" id="skip-task">跳过这一项</button><button class="button button-primary" type="submit">确认并保存 ${icon('arrow')}</button></div></form>`;
+    const advance = isSaved => { if (isSaved) saved++; else skipped++; index++; showDraft(); };
+    $('#skip-task', panel).onclick = () => advance(false);
+    $('#review-form', panel).onsubmit = event => {
+      event.preventDefault();
+      const candidate = readTaskFields(event.currentTarget, task);
+      // Only dates that remain unresolved require a separate, named confirmation.
+      const error = validateTask(candidate);
+      if (error) { $('#review-form-error', panel).textContent = error; return; }
+      saveWithChecks(candidate, { afterSave: () => advance(true), onSkip: () => advance(false) });
+    };
+    if (!task.dateConfirmed) confirmDate(task, confirmed => { drafts[index] = confirmed; showDraft(); });
+  }
+  function extract() {
+    if (ocrBusy) return;
+    if (index < drafts.length && !window.confirm('重新提取会替换尚未确认的结果，已保存的任务不受影响。继续吗？')) return;
+    drafts = extractTasks(raw.value); index = 0; saved = 0; skipped = 0;
+    if (!drafts.length) { toast('请先上传截图或粘贴通知文字。', true); return; }
+    showDraft();
+  }
+  $('#extract-tasks', dialog).onclick = extract;
+  async function handleFile(file) {
+    if (!file || ocrBusy) return;
+    if (!/^image\/(png|jpeg|webp|bmp)$/.test(file.type) || file.size > 20 * 1024 * 1024) { toast('请选择不超过 20 MB 的 PNG、JPG、WebP 或 BMP 图片。', true); return; }
+    if (drafts.length && index < drafts.length && !window.confirm('更换截图会放弃尚未确认的结果。继续吗？')) return;
+    if (previewURL) URL.revokeObjectURL(previewURL);
+    previewURL = URL.createObjectURL(file);
+    $('#image-preview', dialog).innerHTML = `<img src="${esc(previewURL)}" alt="本次导入的课程通知截图"><span class="change-image">点击更换截图</span>`;
+    ocrBusy = true; drafts = []; index = 0; raw.value = '';
+    $('#extract-tasks', dialog).disabled = true;
+    $$('.import-steps span', dialog).forEach((el, i) => el.classList.toggle('active', i === 1));
+    panel.innerHTML = `<div class="review-placeholder"><div class="scan-loader">${icon('scan')}</div><h3 id="ocr-message">正在准备本地识别</h3><div class="ocr-progress"><i id="ocr-bar"></i></div><p>截图保留在你的设备上。<br>长截图识别可能需要一些时间。</p><button class="text-button" id="cancel-ocr">取消识别</button></div>`;
+    $('#cancel-ocr', panel).onclick = () => dialog.close();
+    try {
+      recognize = await import('./ocr.js');
+      if (!dialog.open) return;
+      const result = await recognize.recognizeImage(file, (message, progress) => {
+        if (!dialog.open) return;
+        $('#ocr-message', panel).textContent = message;
+        $('#ocr-bar', panel).style.width = `${Math.max(3, Math.round(progress * 100))}%`;
+      });
+      if (!dialog.open) return;
+      raw.value = result.text;
+      if (!result.text.trim()) throw new Error('没有识别到文字，请裁剪清晰的通知正文重试，或粘贴文字。');
+      ocrBusy = false;
+      extract();
+      if (result.confidence < 65) toast('图片中的部分文字不够清楚，请特别核对任务和日期。', true);
+    } catch (error) {
+      if (!dialog.open) return;
+      panel.innerHTML = `<div class="review-placeholder"><span class="review-placeholder-icon">${icon('help')}</span><h3>这次没有识别完成</h3><p>${esc(error.message || '请重新选择图片，或直接粘贴通知文字。')}</p><p>你仍可在左侧粘贴文字，再提取任务。</p></div>`;
+    } finally { ocrBusy = false; if (dialog.open) $('#extract-tasks', dialog).disabled = false; }
+  }
+  $('#screenshot-file', dialog).onchange = event => handleFile(event.target.files[0]);
+  const drop = $('#image-drop', dialog);
+  drop.onclick = () => { if (!ocrBusy) $('#screenshot-file', dialog).click(); };
+  drop.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); drop.click(); } };
+  drop.ondragover = event => { event.preventDefault(); drop.classList.add('drag-over'); };
+  drop.ondragleave = () => drop.classList.remove('drag-over');
+  drop.ondrop = event => { event.preventDefault(); drop.classList.remove('drag-over'); handleFile(event.dataTransfer.files[0]); };
+  if (mode === 'voice') {
+    $('#image-drop', dialog).style.display = 'none';
+    $('.source-panel > h3', dialog).firstChild.textContent = '语音转写 ';
+    const sourceNotes = $$('.source-note', dialog);
+    sourceNotes[0].textContent = '以下文字来自本机中文语音识别，请核对错字和日期。';
+    sourceNotes[1].textContent = '录音不保存，只将你确认的任务写入本地存储。';
+    $('.modal-header h2', dialog).textContent = '把语音，整理成学习安排';
+    $('.import-steps span', dialog).innerHTML = '<b>1</b> 语音转写';
+  }
+  if (initialText) { raw.value = initialText; extract(); }
+  if (example || initialText) raw.focus();
+}
+
+function download(content, type, filename) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename;
+  document.body.append(anchor); anchor.click(); anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function exportCalendar() {
+  const dated = sortTasks(state.tasks.filter(t => t.dueDate));
+  const undated = state.tasks.filter(t => !t.dueDate).length;
+  if (!dated.length) {
+    openDialog('暂时没有可导出的任务', '日历导出需要明确的截止日期。', `<div class="notice">${icon('calendar')}<p>${undated ? `有 ${undated} 项任务暂无截止日期，补充日期后就可以导出。` : '先添加一项带截止日期的任务吧。'}</p></div>`); return;
+  }
+  const options = tasks => tasks.map(t => `<label class="export-task"><input type="checkbox" name="export-task" value="${esc(t.id)}" checked><span><strong>${esc(t.title)}${t.completedAt ? '（已完成）' : ''}</strong><small>${esc(dueLabel(t))}</small></span></label>`).join('');
+  const dialog = openDialog('带到你的日历里', '生成 .ics 文件，再通过平板的日历应用导入。', `
+    <div class="notice">${icon('calendar')}<p>只记录日期的任务按<strong>当天 00:00</strong>导出。提醒以中国标准时间（UTC+8）计算。</p></div>
+    <div class="export-select-bar"><strong>选择要导出的任务</strong><button class="text-button" id="select-export">全选有日期任务</button></div>
+    <div class="export-list">${options(dated)}</div>
+    <p class="field-note">默认选中全部有截止日期的任务，已完成任务也会标明，你可以取消勾选。${undated ? `另有 ${undated} 项暂无截止日期的任务不参与导出。` : ''}</p>
+    <fieldset class="reminder-options"><legend>提前提醒</legend>${[['4320', '3 天'], ['1440', '1 天'], ['300', '5 小时'], ['60', '1 小时']].map(([value, label]) => `<label><input type="checkbox" name="reminder" value="${value}" checked> ${label}</label>`).join('')}</fieldset>
+    <p class="field-note">不同版本的 ColorOS 日历可能合并或忽略部分提醒，导入后请检查。重复导入也可能产生重复日历事项。</p><p class="form-error" role="alert"></p>
+    <div class="modal-actions"><button class="button button-primary" id="download-calendar">${icon('download')} 下载日历文件</button></div>`);
+  $('#select-export', dialog).onclick = () => { $$('input[name="export-task"]', dialog).forEach(el => { el.checked = true; }); };
+  $('#download-calendar', dialog).onclick = () => {
+    const selected = $$('input[name="export-task"]:checked', dialog).map(el => state.tasks.find(t => t.id === el.value));
+    if (!selected.length) { $('.form-error', dialog).textContent = '请至少选择一项任务。'; return; }
+    const reminders = $$('input[name="reminder"]:checked', dialog).map(el => Number(el.value));
+    download(createCalendar(selected, reminders), 'text/calendar;charset=utf-8', `拾课-学习任务-${localDate()}.ics`);
+    toast('日历文件已生成，请在平板日历中导入并检查提醒');
+  };
+}
+
+let preparingOffline = false;
+async function settings() {
+  const dialog = openDialog('你的本地学习空间', '不需要账号，任务保存在当前设备的这个浏览器中。', `<section class="settings-block"><span class="settings-heading">${icon('shield')} 数据与隐私</span><p>图片识别与任务提取在本机完成，不上传截图或文字，不使用云端 AI。原截图仅用于本次核对，不随任务保存；语音在本机识别，录音不保存。</p><p>清除浏览器数据、卸载浏览器或更换网址，可能导致本地任务不可用。请定期导出备份。</p></section><section class="settings-block"><span class="settings-heading">${icon('download')} 离线识别资源</span><p id="offline-description">${state.offlineReady ? '资源已准备好，可以离线识别和管理任务。' : `首次使用请联网准备资源${state.resourceBytes ? `（约 ${Math.ceil(state.resourceBytes / 1024 / 1024)} MB）` : ''}。准备完成后可以断网使用。`}</p><button class="button button-light" id="prepare-offline" ${preparingOffline ? 'disabled' : ''}>${icon('download')} ${state.offlineReady ? '检查并补全离线资源' : '准备离线使用'}</button><div id="offline-progress" class="ocr-progress" hidden><i></i></div><p class="form-error" id="offline-error" role="alert"></p></section><section class="settings-block"><span class="settings-heading">${icon('inbox')} 任务备份</span><p>备份包含任务文字、日期和完成状态。请自行保管文件。</p><div class="inline-actions"><button class="button button-light" id="backup-export">${icon('download')} 导出备份</button><button class="button button-light" id="backup-import">${icon('upload')} 恢复备份</button><input id="backup-file" type="file" accept=".json,application/json" hidden></div></section><section class="settings-block"><span class="settings-heading">${icon('help')} 安装到平板桌面</span><p>使用平板浏览器打开 HTTPS 安全网址，在浏览器菜单中选择“安装应用”或“添加到桌面”（入口随浏览器而异）。首次准备好离线资源后再断网使用。</p><p>电脑上的 localhost 地址只供电脑本机预览。平板需要可访问的 HTTPS 地址，才能完整使用离线安装。</p><p class="version-note">拾课 v${APP_VERSION} · 第一版逐项确认；批量自动处理将在后续加入。</p></section>`);
+  $('#prepare-offline', dialog).onclick = async () => {
+    if (preparingOffline) return;
+    preparingOffline = true;
+    const button = $('#prepare-offline', dialog); button.disabled = true;
+    $('#offline-progress', dialog).hidden = false;
+    $('#offline-error', dialog).textContent = '';
+    try {
+      const info = await prepareOffline(progress => {
+        if (!dialog.open) return;
+        $('#offline-progress i', dialog).style.width = `${progress * 100}%`;
+        $('#offline-description', dialog).textContent = `正在准备离线资源… ${Math.round(progress * 100)}%（可中断后继续）`;
+      });
+      state.offlineReady = true; state.resourceBytes = info.bytes;
+      if (dialog.open) { $('#offline-description', dialog).textContent = '离线资源已就绪。现在可以断网识别截图和管理任务。'; button.textContent = '资源已准备好'; }
+      render(); toast('离线资源已准备好');
+    } catch (error) { if (dialog.open) $('#offline-error', dialog).textContent = error.message; else toast(error.message, true); }
+    finally { preparingOffline = false; if (dialog.open) button.disabled = false; }
+  };
+  $('#backup-export', dialog).onclick = () => download(JSON.stringify({ format: 'shike-backup', version: 1, exportedAt: new Date().toISOString(), tasks: state.tasks }, null, 2), 'application/json;charset=utf-8', `拾课-任务备份-${localDate()}.json`);
+  $('#backup-import', dialog).onclick = () => $('#backup-file', dialog).click();
+  $('#backup-file', dialog).onchange = event => safely(async () => {
+    const file = event.target.files[0]; if (!file) return;
+    if (file.size > 20 * 1024 * 1024) throw new Error('备份文件超过 20 MB，请检查是否选错文件。');
+    const tasks = parseBackup(await file.text());
+    const overlapping = tasks.filter(t => state.tasks.some(s => s.id === t.id)).length;
+    if (!window.confirm(`备份包含 ${tasks.length} 项任务，将更新 ${overlapping} 项相同 ID 的任务，其余合并保留。是否恢复？`)) return;
+    await restoreTasks(tasks); await reloadTasks(); toast(`已恢复 ${tasks.length} 项任务`);
+  });
+}
+
+document.addEventListener('click', event => {
+  const nav = event.target.closest('[data-view]');
+  if (nav) { const next = PAGES[nav.dataset.view]; if (next) { if (location.hash === `#${next.route}`) { state.view = nav.dataset.view; state.query = ''; render(); } else location.hash = next.route; } return; }
+  const button = event.target.closest('[data-action]');
+  if (!button) return;
+  const { action, id } = button.dataset;
+  if (action === 'import') startImport();
+  else if (action === 'example') startImport(true);
+  else if (action === 'voice') safely(async () => {
+    const { openVoiceInput } = await import('./voice-ui.js');
+    await openVoiceInput({ openDialog, icon, onTextReady: text => startImport(false, text, 'voice') });
+  });
+  else if (action === 'add') editTask();
+  else if (action === 'edit') editTask(id);
+  else if (action === 'export') exportCalendar();
+  else if (action === 'settings') settings();
+  else if (action === 'install') safely(async () => {
+    const outcome = await installApp();
+    if (outcome === 'manual') installHelp();
+    else if (outcome === 'accepted') toast('已提交安装请求，请按浏览器提示完成');
+  });
+  else if (action === 'clear-search') { state.query = ''; $('#task-search').value = ''; renderTaskList(); }
+  else if (action === 'toggle') safely(async () => {
+    const task = state.tasks.find(t => t.id === id);
+    await putTask({ ...task, completedAt: task.completedAt ? null : new Date().toISOString(), updatedAt: new Date().toISOString() });
+    await reloadTasks(); toast(task.completedAt ? '任务已恢复到待完成列表' : '已完成，又向前走了一步');
+  });
+  else if (action === 'delete') {
+    const task = state.tasks.find(t => t.id === id);
+    const dialog = openDialog('删除这项任务？', task.title, `<p>删除后无法从已完成列表恢复，已有的日历事项需要在日历中另行删除。</p><div class="modal-actions"><button class="button button-light" id="cancel-delete">保留任务</button><button class="button button-danger" id="confirm-delete">确认删除</button></div>`);
+    $('#cancel-delete', dialog).onclick = () => dialog.close();
+    $('#confirm-delete', dialog).onclick = () => safely(async () => { await deleteTask(id); await reloadTasks(); dialog.close(); toast('任务已删除'); });
+  }
+});
+
+window.addEventListener('hashchange', () => { state.view = readRoute(); state.query = ''; render(); window.scrollTo({ top: 0 }); });
+
+async function start() {
+  if (!Object.values(PAGES).some(p => `#${p.route}` === location.hash)) history.replaceState(null, '', '#/home');
+  try { state.tasks = await loadTasks(); }
+  catch { state.storageError = true; }
+  render();
+  try {
+    await registerOffline();
+    const status = await offlineStatus(); state.offlineReady = status.ready; state.resourceBytes = status.bytes; render();
+  } catch { /* The task manager remains available if resource discovery is interrupted. */ }
+  if (state.storageError) toast('无法打开本地存储，当前不能保存任务。请检查浏览器设置。', true);
+  setInterval(() => { if (!document.hidden) refreshTimedViews(); }, 60000);
+}
+window.addEventListener('focus', refreshTimedViews);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshTimedViews(); });
+start();
+
+
+
+
+
