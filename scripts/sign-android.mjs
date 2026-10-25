@@ -20,18 +20,40 @@ catch {
 const unsigned = path.resolve(toolsDir, 'app-release-unsigned.apk');
 const signed = path.resolve('../outputs/shike-v1.1.0.apk');
 const signer = path.resolve(toolsDir, 'apksigner.jar');
-execFileSync(java, ['-jar',signer,'sign','--ks',key,'--ks-key-alias','shike','--ks-pass',`file:${secret}`,'--key-pass',`file:${secret}`,'--v1-signing-enabled','false','--v2-signing-enabled','true','--v3-signing-enabled','true','--v4-signing-enabled','false','--out',signed,unsigned], {stdio:'inherit'});
+execFileSync(java, ['-jar',signer,'sign','--ks',key,'--ks-key-alias','shike','--ks-pass',`file:${secret}`,'--v1-signing-enabled','false','--v2-signing-enabled','true','--v3-signing-enabled','true','--v4-signing-enabled','false','--out',signed,unsigned], {stdio:'inherit'});
 execFileSync(java, ['-jar',signer,'verify','--verbose','--print-certs',signed], {stdio:'inherit'});
 const before = await readFile(unsigned), after = await readFile(signed);
-let prefix=0, suffix=0;
-while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
-while (suffix < before.length-prefix && suffix < after.length-prefix && before[before.length-1-suffix] === after[after.length-1-suffix]) suffix++;
 const hash = data => createHash('sha256').update(data).digest('hex');
-const patch = {format:'shike-apk-signature-v1', baseCommit, baseRelease:`android-build-${baseCommit}`, prefix, suffix,
-  middle:after.subarray(prefix,after.length-suffix).toString('base64'), bytes:after.length, baseSHA256:hash(before), signedSHA256:hash(after)};
-if (patch.middle.length > 400000) throw new Error('Unexpected APK rewrite; refusing to publish a large signature patch');
+function entries(data) {
+  let end=-1;
+  for(let i=data.length-22;i>=Math.max(0,data.length-65557);i--)if(data.readUInt32LE(i)===0x06054b50 && i+22+data.readUInt16LE(i+20)===data.length){end=i;break;}
+  if(end<0)throw new Error('ZIP directory not found');
+  const result=[];let cursor=data.readUInt32LE(end+16);
+  for(let i=0;i<data.readUInt16LE(end+10);i++){
+    if(data.readUInt32LE(cursor)!==0x02014b50)throw new Error('Invalid ZIP entry');
+    const length=data.readUInt32LE(cursor+20),nameLength=data.readUInt16LE(cursor+28),extra=data.readUInt16LE(cursor+30),comment=data.readUInt16LE(cursor+32),local=data.readUInt32LE(cursor+42);
+    if(data.readUInt32LE(local)!==0x04034b50)throw new Error('Invalid local ZIP entry');
+    result.push({name:data.subarray(cursor+46,cursor+46+nameLength).toString('utf8'),start:local+30+data.readUInt16LE(local+26)+data.readUInt16LE(local+28),length});
+    cursor+=46+nameLength+extra+comment;
+  }
+  return result;
+}
+const original=new Map(entries(before).map(entry=>[entry.name,entry]));
+const operations=[];let cursor=0, literalSize=0;
+const literal=data=>{if(data.length){literalSize+=data.length;operations.push({data:data.toString('base64')});}};
+for(const entry of entries(after).sort((a,b)=>a.start-b.start)){
+  const source=original.get(entry.name);
+  if(!source||source.length!==entry.length||!before.subarray(source.start,source.start+source.length).equals(after.subarray(entry.start,entry.start+entry.length)))throw new Error('Signer unexpectedly rewrote an APK payload');
+  if(entry.start<cursor)throw new Error('Overlapping ZIP payloads');
+  literal(after.subarray(cursor,entry.start));
+  operations.push({copy:[source.start,source.length]});cursor=entry.start+entry.length;
+}
+literal(after.subarray(cursor));
+if(literalSize>1000000)throw new Error('Unexpected APK metadata size');
+const patch = {format:'shike-apk-signature-v2', baseCommit, baseRelease:`android-build-${baseCommit}`, operations,
+  bytes:after.length, baseSHA256:hash(before), signedSHA256:hash(after)};
 if (!applySignature(before,patch).equals(after)) throw new Error('APK reconstruction mismatch');
 await mkdir('android/release', {recursive:true});
 await writeFile('android/release/signature.json', JSON.stringify(patch,null,2)+'\n');
 await writeFile('../outputs/shike-v1.1.0.sha256', `${patch.signedSHA256}  shike-v1.1.0.apk\n`);
-console.log(`Signed locally; public signature patch is ${patch.middle.length} characters; private key remains in work/private/android-signing.`);
+console.log(`Signed locally; public signature patch contains ${literalSize} metadata bytes; private key remains in work/private/android-signing.`);
