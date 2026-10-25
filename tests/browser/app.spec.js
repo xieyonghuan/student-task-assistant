@@ -102,7 +102,7 @@ test('device Saturday evening resolves relative deadlines, saves a fixed date an
     if (expression === '明天提交') {
       await page.getByRole('button', { name: '确认并保存', exact: true }).click();
       await page.getByRole('button', { name: '回到我的任务' }).click();
-    } else await page.getByRole('button', { name: '关闭窗口', exact: true }).click();
+    } else await page.getByRole('button', { name: '退出添加', exact: true }).click();
   }
   await page.clock.setFixedTime(new Date('2026-10-25T10:00:00+08:00'));
   await page.reload();
@@ -141,7 +141,7 @@ test('typed Chinese deadline text stays attached to its task and fills the date'
     await expect(page.locator('#review-form [name="dueDate"]')).toHaveValue('2026-10-30');
     await expect(page.locator('#review-form [name="dueTime"]')).toHaveValue('');
     await expect(page.getByRole('heading', { name: '确认截止日期', exact: true })).toHaveCount(0);
-    await page.getByRole('button', { name: '关闭窗口', exact: true }).click();
+    await page.getByRole('button', { name: '退出添加', exact: true }).click();
   }
 });
 
@@ -184,6 +184,7 @@ test('recovers from an invalid screenshot by letting the user paste and review t
   await page.getByRole('button', { name: /识别课程截图/ }).click();
   await page.locator('#screenshot-file').setInputFiles({ name: 'broken.png', mimeType: 'image/png', buffer: Buffer.from('not a real picture') });
   await expect(page.locator('#review-panel')).toContainText('这次没有识别完成');
+  await page.getByRole('button', { name: '返回修改原文', exact: false }).click();
   await page.locator('#notification-text').fill('1. 完成地理作业\n截止时间：2026年12月30日');
   await page.getByRole('button', { name: '从文字提取任务', exact: true }).click();
   await page.getByRole('button', { name: '确认并保存', exact: true }).click();
@@ -257,7 +258,8 @@ test('learning destinations have independent routes, layouts, timeline and a str
   await expect(page.locator('.task-card')).toHaveCount(1);
   await expect(page.locator('.task-card')).toContainText('三天内的阅读报告');
   await expect(page.locator('.intake-strip')).toHaveCount(0);
-  await expect(page.locator('.timeline-entry')).toHaveCount(0);
+  await expect(page.locator('.timeline-entry')).toHaveCount(1);
+  await expect(page.locator('.timeline-entry')).toHaveAttribute('data-date', '2026-10-27');
   await page.screenshot({ path: '../outputs/shike-upcoming.png', fullPage: true, style: '#toast { visibility: hidden !important; }' });
   await page.reload();
   await expect(page).toHaveURL(/#\/upcoming$/);

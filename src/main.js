@@ -1,5 +1,6 @@
 import './style.css';
 import './mobile.css';
+import './task-ui.css';
 import { watchMobileViewport } from './viewport.js';
 import { version as APP_VERSION } from '../package.json';
 import { installState, installApp, onInstallChange } from './install.js';
@@ -44,6 +45,8 @@ const paths = {
 };
 const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.book}</svg>`;
 const state = { tasks: [], view: readRoute(), query: '', offlineReady: false, resourceBytes: 0, storageError: false, calendarError: '' };
+let importSession;
+const isImportView = view => ['capture', 'review'].includes(view);
 let toastTimer;
 const savingIds = new Set();
 function toast(message, error = false) {
@@ -62,11 +65,18 @@ function counts() {
   return result;
 }
 function navItem(view, label, symbol, count) {
-  return `<button class="nav-item ${state.view === view ? 'active' : ''}" data-view="${view}" aria-label="${label}${count === null ? '' : `，${count} 项`}" ${state.view === view ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span>${count === null ? '' : `<span class="nav-count">${count}</span>`}</button>`;
+  const active = state.view === view || (view === 'home' && isImportView(state.view));
+  return `<button class="nav-item ${active ? 'active' : ''}" data-view="${view}" aria-label="${label}${count === null ? '' : `，${count} 项`}" ${active ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span>${count === null ? '' : `<span class="nav-count">${count}</span>`}</button>`;
 }
 function render() {
+  if (isImportView(state.view) && !importSession) { startImport(); return; }
+  if (state.view === 'review' && !importSession.canReview()) { history.replaceState(null, '', '#' + PAGES.capture.route); state.view = 'capture'; }
   const n = counts();
   const page = PAGES[state.view];
+  document.documentElement.classList.toggle('import-open', isImportView(state.view));
+  const keepImportPosition = isImportView(state.view) && $('.workspace')?.dataset.page === state.view;
+  const previousScroll = keepImportPosition ? { left: scrollX, top: scrollY } : null;
+  const inputFocus = keepImportPosition && importSession.element.contains(document.activeElement) ? document.activeElement : null;
   const installed = isNativeApp() || installState().installed;
   document.title = `${page.title} · 拾课`;
   const date = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date());
@@ -81,7 +91,7 @@ function render() {
       <button class="nav-item settings-nav" data-action="settings" aria-label="设置与帮助">${icon('settings')}<span>设置与帮助</span></button><div class="sidebar-foot">只留在你的设备上 ${icon('shield')}</div></div>
     </aside>
     <main class="workspace" data-page="${state.view}"><header class="topbar"><span class="breadcrumb">我的学习空间 <span>/</span> ${page.title}</span><div class="topbar-actions"><span class="privacy-badge">${icon('shield')} 本地私密存储</span><button class="button button-light install-button" data-action="install" ${installed ? 'disabled' : ''}>${icon('download')}<span>${installed ? '已安装到桌面' : '安装到桌面'}</span></button><button class="avatar" data-action="settings" aria-label="打开设置">学</button></div></header>
-      <section class="page-heading"><div><p class="eyebrow">${esc(date)}</p><h1>${page.title}</h1><p class="page-subtitle">${page.subtitle}</p></div>${state.view === 'home' ? `<button class="button button-light" data-view="all">${icon('calendar')} 查看全部待办</button>` : `<button class="button button-light" data-action="add">${icon('plus')} 手动添加</button>`}</section>
+      <section class="page-heading"><div><p class="eyebrow">${esc(date)}</p><h1>${page.title}</h1><p class="page-subtitle">${page.subtitle}</p></div>${isImportView(state.view) ? `<button class="button button-light" data-action="exit-import">${icon('close')} 退出添加</button>` : state.view === 'home' ? `<button class="button button-light" data-view="all">${icon('calendar')} 查看全部待办</button>` : `<button class="button button-light" data-action="add">${icon('plus')} 手动添加</button>`}</section>
       ${state.storageError ? '<div class="error-banner" role="alert">无法打开本地存储。请退出无痕模式、检查存储空间后重新打开。本次无法保存任务。</div>' : ''}
       ${state.calendarError ? `<div class="error-banner" role="alert">任务已保存在拾课中，日历尚未同步：${esc(state.calendarError)} <button class="text-button" data-action="calendar">检查日历同步</button></div>` : ''}
       ${renderLearningPage(state, n, icon, esc)}
@@ -89,6 +99,12 @@ function render() {
 
       <footer class="workspace-foot"><span>${icon('shield')} 安心学习，数据只属于你</span><span>拾课 · 学习任务助手</span></footer>
     </main></div>`;
+  if (isImportView(state.view)) {
+    $('#import-page-host').append(importSession.element);
+    importSession.setStage(state.view);
+    inputFocus?.focus({ preventScroll: true });
+    if (previousScroll) window.scrollTo({ ...previousScroll, behavior: 'instant' });
+  }
   renderTaskList();
   $('#task-search')?.addEventListener('input', event => { state.query = event.target.value; renderTaskList(); });
 }
@@ -113,7 +129,7 @@ function renderTaskList() {
     list.innerHTML = `<div class="empty-state"><div class="empty-illustration">${icon(query ? 'search' : state.view === 'completed' ? 'circle' : 'inbox')}<span>✦</span></div><h3>${query ? '没有找到相关任务' : state.view === 'completed' ? '完成的每件事，都会留在这里' : state.view === 'all' ? '第一件小事，从这里开始' : '这里暂时没有任务'}</h3><p>${query ? '换个关键词试试，也可以清空搜索。' : state.view === 'completed' ? '完成任务后点一下圆圈，就能把它收好。' : '上传一张课程截图，或手动记下你的学习安排。'}</p>${query ? '<button class="text-button" data-action="clear-search">清空搜索</button>' : state.view !== 'completed' ? `<button class="button button-light" data-action="add">${icon('plus')} 添加第一项任务</button>` : ''}</div>`;
     return;
   }
-  if (state.view === 'all') {
+  if (['all', 'upcoming'].includes(state.view)) {
     const dated = sortTasks(tasks.filter(t => t.dueDate));
     const dates = [...new Set(dated.map(t => t.dueDate))];
     const undated = tasks.filter(t => !t.dueDate);
@@ -235,20 +251,59 @@ function editTask(id) {
 }
 
 const EXAMPLE = '课程任务通知\n1. 高等数学：完成第三章课后习题\n截止时间：10月30日。请写出计算过程。\n2. 大学英语：提交阅读报告\n请于周五提交，要求不少于300字。\n3. 计算机基础：整理课堂笔记\n要求：总结本章知识点，暂无截止日期。';
-async function startImport(example = false, initialText = '', mode = 'image') {
-  let previewURL, ocrBusy = false, drafts = [], index = 0, saved = 0, skipped = 0, recognize;
-  const dialog = openDialog('把课程通知，变成学习安排', '第一步上传或粘贴通知，第二步逐项核对，确认后才会保存。', `<div class="import-steps"><span class="active"><b>1</b> 导入通知</span><i></i><span><b>2</b> 识别与提取</span><i></i><span><b>3</b> 逐项确认</span></div><div class="import-layout"><section class="source-panel"><h3>课程通知 <span>仅在本地处理</span></h3><input id="screenshot-file" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" hidden><div id="image-drop" class="image-drop" tabindex="0" role="button" aria-label="选择一张课程通知截图"><div id="image-preview"><span class="upload-symbol">${icon('upload')}</span><strong>选择一张课程通知截图</strong><p>点击选择，或将图片拖到这里</p><small>PNG / JPG / WebP · 最大 20 MB</small></div></div><p class="source-note">尽量裁剪至通知正文，文字清晰时识别更准确。</p><label class="field">通知文字 <span class="optional">也可以直接粘贴</span><textarea id="notification-text" rows="7" maxlength="30000" placeholder="识别后的文字会显示在这里。你也可以粘贴通知，再提取任务。">${example ? esc(EXAMPLE) : ''}</textarea></label><button id="extract-tasks" class="button button-light full-width">${icon('spark')} 从文字提取任务</button><p class="source-note">原截图仅用于本次核对，不随任务保存。</p></section><section id="review-panel" class="review-panel"><div class="review-placeholder"><span class="review-placeholder-icon">${icon('scan')}</span><h3>让每一件事，都有着落</h3><p>识别结果会出现在这里。<br>任务名称、截止日期和具体要求，都由你确认。</p><span class="small-chip">${icon('shield')} 没有上传，只有本地识别</span></div></section></div>`, { wide: true, onClose() { recognize?.cancelOCR(); if (previewURL) URL.revokeObjectURL(previewURL); } });
-  const panel = $('#review-panel', dialog);
-  const raw = $('#notification-text', dialog);
+function startImport(example = false, initialText = '', mode = 'image') {
+  let previewURL, ocrBusy = false, drafts = [], index = 0, saved = 0, skipped = 0, recognize, extractedText = '';
+  importSession?.dispose();
+  const returnView = isImportView(state.view) ? 'home' : state.view;
+  const importPage = document.createElement('section');
+  importPage.className = 'import-page glass';
+  importPage.setAttribute('aria-label', '通知导入与任务确认');
+  importPage.innerHTML = `<div class="import-steps"><span class="active"><b>1</b> 导入通知</span><i></i><span><b>2</b> 识别与提取</span><i></i><span><b>3</b> 逐项确认</span></div><div class="import-layout"><section class="source-panel"><h3>课程通知 <span>仅在本地处理</span></h3><input id="screenshot-file" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" hidden><div id="image-drop" class="image-drop" tabindex="0" role="button" aria-label="选择一张课程通知截图"><div id="image-preview"><span class="upload-symbol">${icon('upload')}</span><strong>选择一张课程通知截图</strong><p>点击选择，或将图片拖到这里</p><small>PNG / JPG / WebP · 最大 20 MB</small></div></div><p class="source-note">尽量裁剪至通知正文，文字清晰时识别更准确。</p><label class="field">通知文字 <span class="optional">也可以直接粘贴</span><textarea id="notification-text" rows="7" maxlength="30000" placeholder="识别后的文字会显示在这里。你也可以粘贴通知，再提取任务。">${example ? esc(EXAMPLE) : ''}</textarea></label><button id="extract-tasks" class="button button-light full-width">${icon('spark')} 从文字提取任务</button><p class="source-note">原截图仅用于本次核对，不随任务保存。</p></section><section id="review-panel" class="review-panel"><div class="review-placeholder"><span class="review-placeholder-icon">${icon('scan')}</span><h3>让每一件事，都有着落</h3><p>识别结果会出现在这里。<br>任务名称、截止日期和具体要求，都由你确认。</p><span class="small-chip">${icon('shield')} 没有上传，只有本地识别</span></div></section></div>`;
+  const panel = $('#review-panel', importPage);
+  const raw = $('#notification-text', importPage);
+  const source = $('.source-panel', importPage);
+  const steps = $$('.import-steps span', importPage);
+  const navigation = document.createElement('div');
+  navigation.className = 'import-page-nav';
+  navigation.innerHTML = '<button class="text-button" id="back-to-source">← 返回修改原文</button><button class="button button-light" id="continue-review">继续确认任务 →</button>';
+  importPage.prepend(navigation);
+  function goTo(view, replace = false) {
+    if (location.hash !== '#' + PAGES[view].route) history[replace ? 'replaceState' : 'pushState'](null, '', '#' + PAGES[view].route);
+    state.view = view; state.query = ''; render();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    const heading = $('.review-heading, .review-done h3, #ocr-message', panel);
+    if (view === 'review' && heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+  }
+  function rememberDraft() {
+    const form = $('#review-form', panel);
+    if (form && drafts[index]) drafts[index] = readTaskFields(form, drafts[index]);
+  }
+  importSession = {
+    element: importPage, returnView,
+    canReview: () => drafts.length > 0 || ocrBusy || !!$('.import-error', panel),
+    setStage(view) {
+      const reviewing = view === 'review';
+      if (!reviewing) rememberDraft();
+      source.hidden = reviewing; panel.hidden = !reviewing;
+      $('#back-to-source', importPage).hidden = !reviewing;
+      $('#back-to-source', importPage).disabled = ocrBusy;
+      $('#continue-review', importPage).hidden = reviewing || !drafts.length;
+      steps.forEach((el, i) => { const active = i === (reviewing ? (ocrBusy ? 1 : 2) : 0); el.classList.toggle('active', active); if (active) el.setAttribute('aria-current', 'step'); else el.removeAttribute('aria-current'); });
+    },
+    dispose() { recognize?.cancelOCR(); if (previewURL) URL.revokeObjectURL(previewURL); importPage.remove(); },
+  };
+  $('#back-to-source', importPage).onclick = () => { rememberDraft(); goTo('capture'); };
+  $('#continue-review', importPage).onclick = () => showDraft();
+  goTo('capture', isImportView(state.view));
   function showDraft() {
-    if (!dialog.open) return;
-    $$('.import-steps span', dialog).forEach((el, i) => el.classList.toggle('active', i === 2));
+    if (!importPage.isConnected) return;
+    $$('.import-steps span', importPage).forEach((el, i) => el.classList.toggle('active', i === 2));
     if (index >= drafts.length) {
       panel.innerHTML = `<div class="review-placeholder review-done"><span class="success-symbol">${icon('check')}</span><h3>这份通知，整理好了</h3><p>已保存 ${saved} 项，已跳过 ${skipped} 项。<br>新的学习安排已经在任务列表里。</p><button class="button button-primary" id="finish-import">回到我的任务 ${icon('arrow')}</button></div>`;
-      $('#finish-import', panel).onclick = () => { dialog.close(); location.hash = PAGES.all.route; }; return;
+      $('#finish-import', panel).onclick = () => { location.hash = PAGES.all.route; }; goTo('review'); return;
     }
     const task = drafts[index];
-    panel.innerHTML = `<div class="review-heading"><span class="feature-label">${icon('check')} 逐项确认</span><strong>第 ${index + 1} / ${drafts.length} 项任务</strong></div><div class="review-progress"><i style="width:${index / drafts.length * 100}%"></i></div><p class="review-tip">本地规则提取可能有遗漏，请对照左侧原文检查；缺少的任务可回首页手动添加。</p>${task.dateHint ? `<div class="notice compact">${icon('calendar')}<p>${esc(task.dateHint)}</p></div>` : ''}<form id="review-form">${taskFields(task, 'review-')}<div class="review-actions"><button class="text-button" type="button" id="skip-task">跳过这一项</button><button class="button button-primary" type="submit">确认并保存 ${icon('arrow')}</button></div></form>`;
+    panel.innerHTML = `<div class="review-heading"><span class="feature-label">${icon('check')} 逐项确认</span><strong>第 ${index + 1} / ${drafts.length} 项任务</strong></div><div class="review-progress"><i style="width:${index / drafts.length * 100}%"></i></div><p class="review-tip">请核对这项任务；可展开原文对照，或返回上一步修改后重新提取。</p>${task.dateHint ? `<div class="notice compact">${icon('calendar')}<p>${esc(task.dateHint)}</p></div>` : ''}<details class="source-reference"><summary>查看通知原文${previewURL ? '与截图' : ''}</summary><pre>${esc(extractedText)}</pre>${previewURL ? `<img src="${esc(previewURL)}" alt="导入的课程通知截图">` : ''}</details><form id="review-form">${taskFields(task, 'review-')}<div class="review-actions"><button class="text-button" type="button" id="skip-task">跳过这一项</button><button class="button button-primary" type="submit">确认并保存 ${icon('arrow')}</button></div></form>`;
     const advance = isSaved => { if (isSaved) saved++; else skipped++; index++; showDraft(); };
     $('#skip-task', panel).onclick = () => advance(false);
     $('#review-form', panel).onsubmit = event => {
@@ -259,65 +314,67 @@ async function startImport(example = false, initialText = '', mode = 'image') {
       if (error) { $('#review-form-error', panel).textContent = error; return; }
       saveWithChecks(candidate, { afterSave: () => advance(true), onSkip: () => advance(false) });
     };
+    goTo('review');
     if (!task.dateConfirmed) confirmDate(task, confirmed => { drafts[index] = confirmed; showDraft(); });
   }
   function extract() {
     if (ocrBusy) return;
     if (index < drafts.length && !window.confirm('重新提取会替换尚未确认的结果，已保存的任务不受影响。继续吗？')) return;
-    drafts = extractTasks(raw.value); index = 0; saved = 0; skipped = 0;
+    extractedText = raw.value;
+    drafts = extractTasks(extractedText); index = 0; saved = 0; skipped = 0;
     if (!drafts.length) { toast('请先上传截图或粘贴通知文字。', true); return; }
     showDraft();
   }
-  $('#extract-tasks', dialog).onclick = extract;
+  $('#extract-tasks', importPage).onclick = extract;
   async function handleFile(file) {
     if (!file || ocrBusy) return;
     if (!/^image\/(png|jpeg|webp|bmp)$/.test(file.type) || file.size > 20 * 1024 * 1024) { toast('请选择不超过 20 MB 的 PNG、JPG、WebP 或 BMP 图片。', true); return; }
     if (drafts.length && index < drafts.length && !window.confirm('更换截图会放弃尚未确认的结果。继续吗？')) return;
     if (previewURL) URL.revokeObjectURL(previewURL);
     previewURL = URL.createObjectURL(file);
-    $('#image-preview', dialog).innerHTML = `<img src="${esc(previewURL)}" alt="本次导入的课程通知截图"><span class="change-image">点击更换截图</span>`;
+    $('#image-preview', importPage).innerHTML = `<img src="${esc(previewURL)}" alt="本次导入的课程通知截图"><span class="change-image">点击更换截图</span>`;
     ocrBusy = true; drafts = []; index = 0; raw.value = '';
-    $('#extract-tasks', dialog).disabled = true;
-    $$('.import-steps span', dialog).forEach((el, i) => el.classList.toggle('active', i === 1));
+    $('#extract-tasks', importPage).disabled = true;
+    $$('.import-steps span', importPage).forEach((el, i) => el.classList.toggle('active', i === 1));
     panel.innerHTML = `<div class="review-placeholder"><div class="scan-loader">${icon('scan')}</div><h3 id="ocr-message">正在准备本地识别</h3><div class="ocr-progress"><i id="ocr-bar"></i></div><p>截图保留在你的设备上。<br>长截图识别可能需要一些时间。</p><button class="text-button" id="cancel-ocr">取消识别</button></div>`;
-    $('#cancel-ocr', panel).onclick = () => dialog.close();
+    $('#cancel-ocr', panel).onclick = () => { location.hash = PAGES[returnView].route; };
+    goTo('review');
     try {
       recognize = await import('./ocr.js');
-      if (!dialog.open) return;
+      if (!importPage.isConnected) return;
       const result = await recognize.recognizeImage(file, (message, progress) => {
-        if (!dialog.open) return;
+        if (!importPage.isConnected) return;
         $('#ocr-message', panel).textContent = message;
         $('#ocr-bar', panel).style.width = `${Math.max(3, Math.round(progress * 100))}%`;
       });
-      if (!dialog.open) return;
+      if (!importPage.isConnected) return;
       raw.value = result.text;
       if (!result.text.trim()) throw new Error('没有识别到文字，请裁剪清晰的通知正文重试，或粘贴文字。');
       ocrBusy = false;
       extract();
       if (result.confidence < 65) toast('图片中的部分文字不够清楚，请特别核对任务和日期。', true);
     } catch (error) {
-      if (!dialog.open) return;
-      panel.innerHTML = `<div class="review-placeholder"><span class="review-placeholder-icon">${icon('help')}</span><h3>这次没有识别完成</h3><p>${esc(error.message || '请重新选择图片，或直接粘贴通知文字。')}</p><p>你仍可在左侧粘贴文字，再提取任务。</p></div>`;
-    } finally { ocrBusy = false; if (dialog.open) $('#extract-tasks', dialog).disabled = false; }
+      if (!importPage.isConnected) return;
+      panel.innerHTML = `<div class="review-placeholder import-error"><span class="review-placeholder-icon">${icon('help')}</span><h3>这次没有识别完成</h3><p>${esc(error.message || '请重新选择图片，或直接粘贴通知文字。')}</p><p>点击上方“返回修改原文”，粘贴通知文字后继续提取。</p></div>`;
+    } finally { ocrBusy = false; if (importPage.isConnected) { $('#extract-tasks', importPage).disabled = false; importSession?.setStage(state.view); } }
   }
-  $('#screenshot-file', dialog).onchange = event => handleFile(event.target.files[0]);
-  const drop = $('#image-drop', dialog);
-  drop.onclick = () => { if (!ocrBusy) $('#screenshot-file', dialog).click(); };
+  $('#screenshot-file', importPage).onchange = event => handleFile(event.target.files[0]);
+  const drop = $('#image-drop', importPage);
+  drop.onclick = () => { if (!ocrBusy) $('#screenshot-file', importPage).click(); };
   drop.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); drop.click(); } };
   drop.ondragover = event => { event.preventDefault(); drop.classList.add('drag-over'); };
   drop.ondragleave = () => drop.classList.remove('drag-over');
   drop.ondrop = event => { event.preventDefault(); drop.classList.remove('drag-over'); handleFile(event.dataTransfer.files[0]); };
   if (mode === 'voice') {
-    $('#image-drop', dialog).style.display = 'none';
-    $('.source-panel > h3', dialog).firstChild.textContent = '语音转写 ';
-    const sourceNotes = $$('.source-note', dialog);
+    $('#image-drop', importPage).style.display = 'none';
+    $('.source-panel > h3', importPage).firstChild.textContent = '语音转写 ';
+    const sourceNotes = $$('.source-note', importPage);
     sourceNotes[0].textContent = '以下文字来自本机中文语音识别，请核对错字和日期。';
     sourceNotes[1].textContent = '录音不保存，只将你确认的任务写入本地存储。';
-    $('.modal-header h2', dialog).textContent = '把语音，整理成学习安排';
-    $('.import-steps span', dialog).innerHTML = '<b>1</b> 语音转写';
+    $('.import-steps span', importPage).innerHTML = '<b>1</b> 语音转写';
   }
   if (initialText) { raw.value = initialText; extract(); }
-  if (example || initialText) raw.focus();
+  if (example && !initialText) raw.focus();
 }
 
 function download(content, type, filename) {
@@ -434,6 +491,7 @@ document.addEventListener('click', event => {
   const { action, id } = button.dataset;
   if (action === 'import') startImport();
   else if (action === 'example') startImport(true);
+  else if (action === 'exit-import') location.hash = PAGES[importSession.returnView].route;
   else if (action === 'voice') safely(async () => {
     const { openVoiceInput } = await import('./voice-ui.js');
     await openVoiceInput({ openDialog, icon, onTextReady: text => startImport(false, text, 'voice') });
@@ -462,7 +520,11 @@ document.addEventListener('click', event => {
   }
 });
 
-window.addEventListener('hashchange', () => { state.view = readRoute(); state.query = ''; render(); window.scrollTo({ top: 0 }); });
+window.addEventListener('hashchange', () => {
+  state.view = readRoute(); state.query = '';
+  if (!isImportView(state.view) && importSession) { importSession.dispose(); importSession = undefined; }
+  render(); window.scrollTo({ top: 0 });
+});
 
 async function start() {
   watchMobileViewport();

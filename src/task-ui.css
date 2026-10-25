@@ -1,0 +1,67 @@
+/* Keep the same reading and input order on desktop, tablet and phone. */
+.home-methods { grid-template-columns: minmax(0, 1fr); }
+.entry-method { min-height: 0; }
+@media (min-width: 651px) {
+  .entry-method { grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; }
+  .entry-method > .button { grid-column: 3; grid-row: 1; margin-top: 0; }
+}
+
+.due-label, .timeline-tasks .due-label {
+  font-size: 18px; font-weight: 600; color: #526b96;
+  line-height: 1.6; margin-top: 10px; gap: 8px; overflow-wrap: anywhere;
+}
+.due-label .icon { width: 20px; height: 20px; }
+.due-label.is-overdue { color: #a65d4c; }
+.timeline-date strong { font-size: 20px; font-weight: 650; }
+.timeline-date small, .timeline-date > span { font-size: 12px; }
+.timeline-entry.upcoming:after { background: #6482df; }
+.timeline-entry.upcoming .timeline-date > span { color: #5777c1; }
+
+/* Import and review are separate routes, with only the current step visible. */
+.import-page { border-radius: 22px; padding: 24px 32px 32px; }
+.import-page [hidden] { display: none !important; }
+.import-page-nav { display: flex; align-items: center; justify-content: space-between; }
+.import-page-nav:has(> [hidden]:first-child) { justify-content: flex-end; }
+.import-page .import-steps { max-width: 800px; margin: 8px auto 28px; font-size: 14px; }
+.import-page .import-layout { display: block; max-width: 800px; margin: auto; }
+.import-page .source-panel { border: 0; padding: 0; }
+.import-page .source-panel > h3 { font-size: 18px; }
+.import-page .source-panel > h3 > span { font-size: 12px; }
+.import-page .field { font-size: 15px; }
+.import-page .field input, .import-page .field textarea { font-size: 16px; }
+.import-page .source-panel textarea { min-height: 180px; max-height: none; }
+.import-page .source-note, .import-page .review-tip { font-size: 14px; color: #657b9c; }
+.import-page .review-heading { flex-wrap: wrap; gap: 12px; }
+.import-page .review-heading > strong { font-size: 16px; color: #526b96; }
+.import-page .review-heading .feature-label { font-size: 14px; }
+.import-page .review-heading:focus { outline: none; }
+.import-page .review-actions { flex-wrap: wrap; gap: 12px; }
+.import-page .button, .import-page .text-button { font-size: 15px; min-height: 46px; }
+.import-page .source-panel > .button { margin-top: 8px; }
+.source-reference { margin: 0 0 20px; background: #f3f6fccc; border: 1px solid #e0e7f4; border-radius: 12px; padding: 0 16px; }
+.source-reference summary { cursor: pointer; font-size: 14px; color: #526b96; padding: 14px 0; min-height: 48px; }
+.source-reference pre { margin: 0 0 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 14px; line-height: 1.8; color: #526480; }
+.source-reference img { display: block; max-width: 100%; height: auto; margin: 0 auto 16px; border-radius: 8px; }
+
+@media (max-width: 1000px) {
+  .due-label, .timeline-tasks .due-label { font-size: 16px; }
+  .timeline-date strong { font-size: 18px; }
+  .timeline-date small, .timeline-date > span { font-size: 11px; }
+  .import-page { padding: 20px; }
+}
+@media (max-width: 650px) {
+  .import-open .sidebar { display: none; }
+  .import-open .app-shell { padding-bottom: 16px; }
+  .due-label, .timeline-tasks .due-label { font-size: 15px; flex-wrap: wrap; gap: 5px; }
+  .due-label .icon { width: 17px; height: 17px; }
+  .timeline-date strong { font-size: 14px; }
+  .timeline-date small, .timeline-date > span { font-size: 10px; }
+  .import-page { padding: 16px; border-radius: 18px; }
+  .import-page .import-steps { font-size: 11px; gap: 4px; margin-bottom: 20px; }
+  .import-page .import-page-nav .button, .import-page .import-page-nav .text-button { font-size: 14px; }
+  .import-page .source-panel > h3 { font-size: 16px; gap: 8px; }
+  .import-page .source-note, .import-page .review-tip { font-size: 13px; }
+  .import-page .source-panel textarea { min-height: 160px; }
+  .import-page .review-heading > strong { font-size: 14px; }
+  .source-reference { padding: 0 12px; }
+}
