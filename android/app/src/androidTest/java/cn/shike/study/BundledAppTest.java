@@ -32,7 +32,7 @@ public class BundledAppTest {
             eval("window.__probe=null; const prior=ShikeNative.onmessage; ShikeNative.onmessage=e=>{const m=JSON.parse(e.data);if(m.id==='probe')window.__probe=m;else prior?.(e)}; ShikeNative.postMessage(JSON.stringify({id:'probe',method:'calendarStatus',args:{}}));");
             waitFor("window.__probe?.ok===true", 15);
             assertEquals("true", eval("window.__probe.result.available"));
-            assertEquals("true", eval("location.origin==='https://appassets.androidplatform.net'"));
+            assertEquals("true", eval("location.origin==='http://127.0.0.1:48731' && isSecureContext"));
             eval("document.querySelector('[data-action=import]').click()");
             waitFor("!!document.querySelector('#screenshot-file')", 10);
             eval("(() => {const c=document.createElement('canvas');c.width=1400;c.height=450;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,1400,450);x.fillStyle='#111';x.font='48px sans-serif';['完成数学第三章习题','截止时间：2026年12月30日 23:59','要求：写出计算过程。'].forEach((line,i)=>x.fillText(line,60,90+i*100));c.toBlob(blob=>{const d=new DataTransfer();d.items.add(new File([blob],'notice.png',{type:'image/png'}));const input=document.querySelector('#screenshot-file');input.files=d.files;input.dispatchEvent(new Event('change',{bubbles:true}));});})();");

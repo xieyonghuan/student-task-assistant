@@ -90,7 +90,7 @@ public final class CalendarStore {
         return map;
     }
     private void remove(long id, long calendar) {
-        resolver.delete(adapterUri(ContentUris.withAppendedId(Events.CONTENT_URI, id)), ownSelection(), ownArgs(calendar));
+        resolver.delete(adapterUri(Events.CONTENT_URI), Events._ID + "=? AND " + ownSelection(), new String[]{String.valueOf(id), String.valueOf(calendar), context.getPackageName()});
     }
     public JSONObject sync(JSONArray tasks) throws Exception {
         if (!preferences.getBoolean("enabled", false)) return new JSONObject().put("enabled", false);
@@ -103,7 +103,7 @@ public final class CalendarStore {
             String id = task.getString("id"), title = task.getString("title");
             long begin = task.getLong("begin");
             if (id.trim().isEmpty() || id.length() > 512 || !ids.add(id) || title.trim().isEmpty() || title.length() > 500
-                    || begin < 946656000000L || begin > 7258089600000L || task.optString("details").length() > 30000)
+                    || begin < 946656000000L || begin > 7289625599999L || task.optString("details").length() > 30000)
                 throw new IllegalArgumentException("任务日期或内容无效，尚未执行日历同步。");
         }
         long calendar = calendarId();
@@ -128,8 +128,8 @@ public final class CalendarStore {
                 ArrayList<ContentProviderOperation> ops = new ArrayList<>();
                 if (eventId == null) ops.add(ContentProviderOperation.newInsert(Events.CONTENT_URI).withValues(values).build());
                 else {
-                    ops.add(ContentProviderOperation.newUpdate(ContentUris.withAppendedId(Events.CONTENT_URI, eventId))
-                        .withSelection(ownSelection(), ownArgs(calendar)).withValues(values).withExpectedCount(1).build());
+                    ops.add(ContentProviderOperation.newUpdate(Events.CONTENT_URI)
+                        .withSelection(Events._ID + "=? AND " + ownSelection(), new String[]{eventId.toString(), String.valueOf(calendar), context.getPackageName()}).withValues(values).withExpectedCount(1).build());
                     ops.add(ContentProviderOperation.newDelete(Reminders.CONTENT_URI).withSelection(Reminders.EVENT_ID + "=?", new String[]{eventId.toString()}).build());
                 }
                 if (!completed) for (int minute : ALERTS) {

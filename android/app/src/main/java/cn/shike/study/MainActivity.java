@@ -37,8 +37,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
-    static final String ORIGIN = "https://appassets.androidplatform.net";
-    static final String START = ORIGIN + "/assets/web/index.html";
+    static final String ORIGIN = "http://127.0.0.1:" + LocalAssets.PORT;
+    static final String START = ORIGIN + "/index.html";
     private WebView web;
     private CalendarStore calendar;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -48,12 +48,14 @@ public final class MainActivity extends Activity {
     private ValueCallback<Uri[]> chooser;
     interface Reply { void send(Object value, Exception error); }
     interface Work { Object run() throws Exception; }
-    private boolean local(Uri uri) { return "https".equals(uri.getScheme()) && "appassets.androidplatform.net".equals(uri.getHost()) && uri.getPort() == -1; }
+    private boolean local(Uri uri) { return "http".equals(uri.getScheme()) && "127.0.0.1".equals(uri.getHost()) && uri.getPort() == LocalAssets.PORT; }
     private WebResourceResponse blocked() {
         return new WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", Collections.emptyMap(), new ByteArrayInputStream(new byte[0]));
     }
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        try { LocalAssets.start(this); }
+        catch (Exception error) { TextView text = new TextView(this); text.setText("本地资源暂时无法启动，请关闭后重新打开拾课。"); text.setPadding(48,64,48,48); setContentView(text); return; }
         calendar = new CalendarStore(this);
         web = new WebView(this);
         FrameLayout root = new FrameLayout(this); root.setBackgroundColor(Color.rgb(242, 245, 252));
@@ -73,24 +75,18 @@ public final class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setSupportMultipleWindows(false);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
-        WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
-            .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this)).build();
         web.setWebViewClient(new WebViewClientCompat() {
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                if (!local(request.getUrl())) return blocked();
-                WebResourceResponse response = loader.shouldInterceptRequest(request.getUrl());
-                return response == null ? blocked() : response;
+                return local(request.getUrl()) ? null : blocked();
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return !local(request.getUrl()) || !request.getUrl().getPath().startsWith("/assets/web/");
+                return !local(request.getUrl());
             }
         });
         if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)) {
             ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(new ServiceWorkerClientCompat() {
                 @Override public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
-                    if (!local(request.getUrl())) return blocked();
-                    WebResourceResponse response = loader.shouldInterceptRequest(request.getUrl());
-                    return response == null ? blocked() : response;
+                    return local(request.getUrl()) ? null : blocked();
                 }
             });
         }

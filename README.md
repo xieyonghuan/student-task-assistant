@@ -1,6 +1,16 @@
 # 拾课 · 学习任务助手
 
-供 OPPO Pad 3 使用的本地学习任务 PWA。浅色玻璃界面，支持横竖屏。当前为 **v1.0.0**。
+供 OPPO Pad 3 使用的本地学习任务助手，提供 PWA 和 Android 安装版。浅色玻璃界面，支持横竖屏。当前为 **v1.1.0**。
+
+## v1.1 Android 自动日历
+
+- [下载 Android APK](https://github.com/xieyonghuan/student-task-assistant/releases/download/v1.1.0/shike-v1.1.0.apk)。首次在设置中“管理自动同步”并允许日历权限，之后保存任务自动写入本机日历，无需导入文件。
+- 使用独立的本地“拾课 · 学习任务”日历。修改更新原日程；完成撤销提醒，恢复重新提醒；删除或取消截止日期移除相应日程；暂停保留已有日程，恢复时核对。
+- 所有日历写入限定于拾课标记的事项。日历权限被关闭或同步失败时，任务仍保存，页面提供持续的错误提示与重试入口。
+- 识别模型随 APK 内置；截图和语音不上传。旧网页任务请导出 JSON 备份，在安装版恢复。升级覆盖安装，卸载前先备份。
+- [安装与同步规则](android/RELEASE.md)。真实 OPPO Pad 3 的日历展示和通知仍需实机确认。
+- Android 源码位于同一项目的 `android/`。构建使用 JDK 17、Gradle 8.11.1、SDK 35；`npm run build` 后运行 `node scripts/prepare-android.mjs`，再 `gradle -p android assembleRelease`。
+- 安装包在本机使用私钥签名，仓库与 CI 仅接收公开签名补丁。私钥保存在项目外的 `work/private/android-signing/`，不上传。具体构建与签名见相关 scripts 和 Actions 配置。
 
 ## v1.0 发布
 
@@ -10,7 +20,7 @@
 - GitHub Pages 工作流在 `main` 更新后运行测试、构建、检查发布内容并部署。首次需要仓库管理员在 Settings → Pages 将 Source 设为 GitHub Actions。
 - 目标地址：`https://xieyonghuan.github.io/student-task-assistant/`，以 Pages 部署成功后实际返回的地址为准。
 - 在正式网址中使用时，资源与任务存储属于该网址。迁移电脑已有任务请先导出 JSON 备份，再在平板恢复；不通过账号同步。
-- 不涉及原生 APK、后台推送、多设备同步或批量自动入库。ColorOS 日历的导入入口与多次提醒须在真实设备验收。
+- v1.0 为 PWA；v1.1 新增 Android APK。暂不提供多设备同步或批量自动入库。日历提醒由系统日历负责，效果须在真实设备验收。
 
 ## 本次更新
 
