@@ -1,3 +1,4 @@
+import { isNativeApp } from './native.js';
 const base = new URL(import.meta.env.BASE_URL, document.baseURI);
 export const appURL = file => new URL(file, base).href;
 let resources;
@@ -34,6 +35,7 @@ async function manifest() {
 }
 
 export async function registerOffline() {
+  if (isNativeApp()) return true;
   if (!window.isSecureContext || !('serviceWorker' in navigator)) return false;
   if (import.meta.env.DEV) return false;
   await navigator.serviceWorker.register(appURL('sw.js'), { scope: base.pathname });
@@ -45,6 +47,7 @@ export async function registerOffline() {
 }
 
 export async function offlineStatus() {
+  if (isNativeApp()) { const info = await manifest(); return { ready: true, bytes: info.bytes }; }
   if (!('caches' in window)) return { ready: false, bytes: 0 };
   const info = await manifest();
   const cache = await resourceCache('ocr', info);
@@ -53,6 +56,7 @@ export async function offlineStatus() {
 }
 
 export async function prepareOffline(onProgress) {
+  if (isNativeApp()) { const info = await manifest(); onProgress(1); return { bytes: info.bytes }; }
   if (!window.isSecureContext || !('caches' in window)) throw new Error('离线安装需要 HTTPS 安全地址。电脑本机可使用 localhost。');
   if (import.meta.env.DEV) throw new Error('当前是开发预览。请运行构建后的版本以准备完整离线功能。');
   await registerOffline();
@@ -86,12 +90,14 @@ async function voiceManifest() {
 }
 export async function voiceOfflineStatus() {
   const info = await voiceManifest();
+  if (isNativeApp()) return { ready: true, bytes: info.bytes };
   if (!('caches' in window)) return { ready: false, bytes: info.bytes };
   const cache = await resourceCache('voice', info);
   const resources = await Promise.all(info.files.map(f => cache.match(appURL(`voice/${f}`), { ignoreVary: true })));
   return { ready: resources.every(Boolean), bytes: info.bytes };
 }
 export async function prepareVoiceOffline(onProgress, signal) {
+  if (isNativeApp()) { const info = await voiceManifest(); onProgress(1); return { ready: true, bytes: info.bytes }; }
   if (!window.isSecureContext || !('caches' in window)) throw new Error('语音输入需要 HTTPS 安全网址，电脑本机可用 localhost。');
   if (import.meta.env.DEV) throw new Error('完整离线语音请在构建后的版本中使用。');
   await registerOffline();

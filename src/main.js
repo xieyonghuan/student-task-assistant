@@ -6,6 +6,8 @@ import { newId, extractTasks, findDuplicates, sanitizeTask, validateTask, taskGr
 import { loadTasks, putTask, deleteTask, parseBackup, restoreTasks } from './storage.js';
 import { createCalendar } from './calendar.js';
 import { registerOffline, offlineStatus, prepareOffline } from './offline.js';
+import { isNativeApp, nativeCall } from './native.js';
+import { calendarStatus, setCalendarEnabled, syncCalendar } from './calendar-sync.js';
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -39,14 +41,18 @@ const paths = {
   help: '<circle cx="12" cy="12" r="9"/><path d="M9 9a3 3 0 1 1 5 2c-2 1-2 2-2 3m0 3v.1"/>',
 };
 const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.book}</svg>`;
-const state = { tasks: [], view: readRoute(), query: '', offlineReady: false, resourceBytes: 0, storageError: false };
+const state = { tasks: [], view: readRoute(), query: '', offlineReady: false, resourceBytes: 0, storageError: false, calendarError: '' };
 let toastTimer;
 const savingIds = new Set();
 function toast(message, error = false) {
   const el = $('#toast'); el.textContent = message; el.className = `visible${error ? ' error' : ''}`;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.className = ''; }, error ? 7000 : 4000);
 }
-async function reloadTasks() { state.tasks = await loadTasks(); render(); }
+async function syncSavedTasks() {
+  try { await syncCalendar(state.tasks); if (state.calendarError) { state.calendarError = ''; render(); } }
+  catch (error) { state.calendarError = error.message; render(); }
+}
+async function reloadTasks() { state.tasks = await loadTasks(); render(); await syncSavedTasks(); }
 async function safely(action) { try { await action(); } catch (e) { toast(e.message || '操作未完成，请重试。', true); } }
 function counts() {
   const result = { all: 0, scheduled: 0, upcoming: 0, overdue: 0, undated: 0, completed: 0 };
@@ -59,7 +65,7 @@ function navItem(view, label, symbol, count) {
 function render() {
   const n = counts();
   const page = PAGES[state.view];
-  const installed = installState().installed;
+  const installed = isNativeApp() || installState().installed;
   document.title = `${page.title} · 拾课`;
   const date = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date());
   $('#app').innerHTML = `<div class="app-shell">
@@ -75,6 +81,7 @@ function render() {
     <main class="workspace" data-page="${state.view}"><header class="topbar"><span class="breadcrumb">我的学习空间 <span>/</span> ${page.title}</span><div class="topbar-actions"><span class="privacy-badge">${icon('shield')} 本地私密存储</span><button class="button button-light install-button" data-action="install" ${installed ? 'disabled' : ''}>${icon('download')}<span>${installed ? '已安装到桌面' : '安装到桌面'}</span></button><button class="avatar" data-action="settings" aria-label="打开设置">学</button></div></header>
       <section class="page-heading"><div><p class="eyebrow">${esc(date)}</p><h1>${page.title}</h1><p class="page-subtitle">${page.subtitle}</p></div>${state.view === 'home' ? `<button class="button button-light" data-view="all">${icon('calendar')} 查看全部待办</button>` : `<button class="button button-light" data-action="add">${icon('plus')} 手动添加</button>`}</section>
       ${state.storageError ? '<div class="error-banner" role="alert">无法打开本地存储。请退出无痕模式、检查存储空间后重新打开。本次无法保存任务。</div>' : ''}
+      ${state.calendarError ? `<div class="error-banner" role="alert">任务已保存在拾课中，日历尚未同步：${esc(state.calendarError)} <button class="text-button" data-action="calendar">检查日历同步</button></div>` : ''}
       ${renderLearningPage(state, n, icon, esc)}
 
 
@@ -312,6 +319,10 @@ async function startImport(example = false, initialText = '', mode = 'image') {
 }
 
 function download(content, type, filename) {
+  if (isNativeApp()) {
+    safely(async () => { await nativeCall('saveFile', { content, type, filename }); toast('文件已保存到你选择的位置'); });
+    return;
+  }
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename;
@@ -320,6 +331,7 @@ function download(content, type, filename) {
 }
 
 function exportCalendar() {
+  if (isNativeApp()) { calendarSettings(); return; }
   const dated = sortTasks(state.tasks.filter(t => t.dueDate));
   const undated = state.tasks.filter(t => !t.dueDate).length;
   if (!dated.length) {
@@ -344,9 +356,44 @@ function exportCalendar() {
   };
 }
 
+async function calendarSettings() {
+  const dialog = openDialog('自动写入系统日历', '开启后，保存任务就会同步，不需要下载或导入文件。', `<div class="notice">${icon('calendar')}<p>在系统日历中使用<strong>拾课 · 学习任务</strong>本地日历，不需要登录云账号。</p></div><p>新增与修改会更新对应日程；完成后保留记录并撤销提醒，恢复后重新提醒。删除任务或移除截止日期会移除对应日程。默认提前 3 天、1 天、5 小时、1 小时提醒。</p><p>只同步拾课创建的日程。关闭自动同步会保留已有日程；重新开启时会按拾课当前任务更新。</p><p id="calendar-status" role="status">正在检查日历权限…</p><p class="form-error" id="calendar-error" role="alert"></p><div class="modal-actions"><button class="button button-light" id="calendar-disable" disabled>暂停自动同步</button><button class="button button-primary" id="calendar-enable" disabled>开启自动同步</button></div>`);
+  const statusLabel = $('#calendar-status', dialog), errorLabel = $('#calendar-error', dialog);
+  const enable = $('#calendar-enable', dialog), disable = $('#calendar-disable', dialog);
+  async function refresh() {
+    const status = await calendarStatus();
+    if (!dialog.open) return;
+    statusLabel.textContent = status.enabled && status.granted ? '自动同步已开启。请在 ColorOS 日历的日历列表中显示“拾课 · 学习任务”。' : status.enabled ? '日历权限未允许，任务仍在拾课中。点击下方按钮重新授权。' : '尚未开启自动同步，任务只保存在拾课中。';
+    enable.textContent = status.enabled && status.granted ? '立即核对并同步' : '授权并开启自动同步';
+    enable.disabled = !status.available; disable.disabled = !status.enabled;
+    if (!status.available) errorLabel.textContent = '设备没有可用的系统日历服务，请先安装或启用系统日历。';
+  }
+  enable.onclick = async () => {
+    enable.disabled = disable.disabled = true; errorLabel.textContent = '';
+    try { await setCalendarEnabled(true); await syncCalendar(state.tasks); state.calendarError = ''; render(); if (dialog.open) statusLabel.textContent = '任务已写入系统日历。'; }
+    catch (error) { if (dialog.open) errorLabel.textContent = error.message; }
+    finally { await refresh().catch(error => { if (dialog.open) errorLabel.textContent = error.message; }); }
+  };
+  disable.onclick = async () => {
+    enable.disabled = disable.disabled = true; errorLabel.textContent = '';
+    try { await setCalendarEnabled(false); }
+    catch (error) { if (dialog.open) errorLabel.textContent = error.message; }
+    finally { await refresh(); }
+  };
+  await refresh();
+}
+
 let preparingOffline = false;
 async function settings() {
   const dialog = openDialog('你的本地学习空间', '不需要账号，任务保存在当前设备的这个浏览器中。', `<section class="settings-block"><span class="settings-heading">${icon('shield')} 数据与隐私</span><p>图片识别与任务提取在本机完成，不上传截图或文字，不使用云端 AI。原截图仅用于本次核对，不随任务保存；语音在本机识别，录音不保存。</p><p>清除浏览器数据、卸载浏览器或更换网址，可能导致本地任务不可用。请定期导出备份。</p></section><section class="settings-block"><span class="settings-heading">${icon('download')} 离线识别资源</span><p id="offline-description">${state.offlineReady ? '资源已准备好，可以离线识别和管理任务。' : `首次使用请联网准备资源${state.resourceBytes ? `（约 ${Math.ceil(state.resourceBytes / 1024 / 1024)} MB）` : ''}。准备完成后可以断网使用。`}</p><button class="button button-light" id="prepare-offline" ${preparingOffline ? 'disabled' : ''}>${icon('download')} ${state.offlineReady ? '检查并补全离线资源' : '准备离线使用'}</button><div id="offline-progress" class="ocr-progress" hidden><i></i></div><p class="form-error" id="offline-error" role="alert"></p></section><section class="settings-block"><span class="settings-heading">${icon('inbox')} 任务备份</span><p>备份包含任务文字、日期和完成状态。请自行保管文件。</p><div class="inline-actions"><button class="button button-light" id="backup-export">${icon('download')} 导出备份</button><button class="button button-light" id="backup-import">${icon('upload')} 恢复备份</button><input id="backup-file" type="file" accept=".json,application/json" hidden></div></section><section class="settings-block"><span class="settings-heading">${icon('help')} 安装到平板桌面</span><p>使用平板浏览器打开 HTTPS 安全网址，在浏览器菜单中选择“安装应用”或“添加到桌面”（入口随浏览器而异）。首次准备好离线资源后再断网使用。</p><p>电脑上的 localhost 地址只供电脑本机预览。平板需要可访问的 HTTPS 地址，才能完整使用离线安装。</p><p class="version-note">拾课 v${APP_VERSION} · 第一版逐项确认；批量自动处理将在后续加入。</p></section>`);
+  if (isNativeApp()) {
+    const section = document.createElement('section'); section.className = 'settings-block';
+    section.innerHTML = `<span class="settings-heading">${icon('calendar')} 系统日历</span><p>首次授权后，新增、修改、完成和删除任务会自动同步到本机日历。</p><button class="button button-light" id="open-calendar-sync">管理自动同步</button>`;
+    $('.modal-body', dialog).prepend(section);
+    $('#open-calendar-sync', dialog).onclick = () => { dialog.close(); safely(calendarSettings); };
+    const help = $$('.settings-block', dialog).at(-1);
+    help.innerHTML = `<span class="settings-heading">${icon('help')} Android 安装版</span><p>截图和语音识别资源已内置，可以直接离线使用。任务仍只保存在这个应用中。</p><p>如需迁移网页里的任务：先在原网页导出备份，再在此处恢复。升级请覆盖安装；卸载或清除应用数据前请导出备份。</p><p class="version-note">拾课 v${APP_VERSION}</p>`;
+  }
   $('#prepare-offline', dialog).onclick = async () => {
     if (preparingOffline) return;
     preparingOffline = true;
@@ -391,8 +438,9 @@ document.addEventListener('click', event => {
   });
   else if (action === 'add') editTask();
   else if (action === 'edit') editTask(id);
-  else if (action === 'export') exportCalendar();
+  else if (action === 'export') safely(exportCalendar);
   else if (action === 'settings') settings();
+  else if (action === 'calendar') safely(calendarSettings);
   else if (action === 'install') safely(async () => {
     const outcome = await installApp();
     if (outcome === 'manual') installHelp();
@@ -406,7 +454,7 @@ document.addEventListener('click', event => {
   });
   else if (action === 'delete') {
     const task = state.tasks.find(t => t.id === id);
-    const dialog = openDialog('删除这项任务？', task.title, `<p>删除后无法从已完成列表恢复，已有的日历事项需要在日历中另行删除。</p><div class="modal-actions"><button class="button button-light" id="cancel-delete">保留任务</button><button class="button button-danger" id="confirm-delete">确认删除</button></div>`);
+    const dialog = openDialog('删除这项任务？', task.title, `<p>删除后无法从已完成列表恢复。${isNativeApp() ? '已开启自动同步时，对应日历事项也会移除。' : '已有的日历事项需要在日历中另行删除。'}</p><div class="modal-actions"><button class="button button-light" id="cancel-delete">保留任务</button><button class="button button-danger" id="confirm-delete">确认删除</button></div>`);
     $('#cancel-delete', dialog).onclick = () => dialog.close();
     $('#confirm-delete', dialog).onclick = () => safely(async () => { await deleteTask(id); await reloadTasks(); dialog.close(); toast('任务已删除'); });
   }
@@ -419,6 +467,7 @@ async function start() {
   try { state.tasks = await loadTasks(); }
   catch { state.storageError = true; }
   render();
+  if (!state.storageError) await syncSavedTasks();
   try {
     await registerOffline();
     const status = await offlineStatus(); state.offlineReady = status.ready; state.resourceBytes = status.bytes; render();

@@ -1,0 +1,44 @@
+name: Publish signed Android app
+on:
+  push:
+    branches: [main]
+    paths: ['android/release/signature.json']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Validate reviewed build reference
+        id: build
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const patch=JSON.parse(fs.readFileSync('android/release/signature.json','utf8'));
+          if(!/^[a-f0-9]{40}$/.test(patch.baseCommit)||patch.baseRelease!=='android-build-'+patch.baseCommit)throw Error('Invalid source build');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,`tag=${patch.baseRelease}\ncommit=${patch.baseCommit}\n`);
+          JS
+      - name: Download exact unsigned build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_TAG: ${{ steps.build.outputs.tag }}
+        run: gh release download "$BUILD_TAG" --dir android-build
+      - run: node scripts/apply-android-signature.mjs android-build/app-release-unsigned.apk shike-v1.1.0.apk
+      - run: java -jar android-build/apksigner.jar verify --verbose --print-certs shike-v1.1.0.apk
+      - name: Publish installable APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ steps.build.outputs.commit }}
+        run: |
+          sha256sum shike-v1.1.0.apk > shike-v1.1.0.sha256
+          gh release create v1.1.0 shike-v1.1.0.apk shike-v1.1.0.sha256 --target "$SOURCE_COMMIT" --title '拾课 v1.1.0 · 自动同步系统日历' --notes-file android/RELEASE.md

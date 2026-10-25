@@ -1,3 +1,4 @@
+import { isNativeApp } from './native.js';
 export const PAGES = {
   home: { route: '/home', title: '首页', subtitle: '从一条通知、一段话开始，收好今天的学习安排。', symbol: 'home' },
   all: { route: '/tasks', title: '全部待办', subtitle: '沿着截止时间，一件一件完成。', symbol: 'calendar' },
@@ -11,7 +12,7 @@ export function readRoute() {
   return Object.keys(PAGES).find(key => `#${PAGES[key].route}` === location.hash) || 'home';
 }
 
-const tools = (query, icon, escape) => `<div class="task-tools"><label class="search-box">${icon('search')}<input id="task-search" type="search" placeholder="搜索任务或具体要求" aria-label="搜索任务" value="${escape(query)}"></label><button class="button button-subtle" data-action="export">${icon('calendar')}<span>导出日历</span></button></div>`;
+const tools = (query, icon, escape) => `<div class="task-tools"><label class="search-box">${icon('search')}<input id="task-search" type="search" placeholder="搜索任务或具体要求" aria-label="搜索任务" value="${escape(query)}"></label><button class="button button-subtle" data-action="export">${icon('calendar')}<span>${isNativeApp() ? '日历自动同步' : '导出日历'}</span></button></div>`;
 const listPanel = (view, title, query, icon, escape) => `<section class="task-section glass ${view}-task-panel" aria-label="${title}"><div class="task-toolbar"><h2 class="list-title">${title}</h2>${tools(query, icon, escape)}</div><div id="task-list"></div></section>`;
 
 function homePage(state, counts, icon) {

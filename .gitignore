@@ -40,3 +40,12 @@ Desktop.ini
 
 # Local test notifications and screenshots
 /tests/fixtures/local/
+
+# Android generated assets, SDK paths and private signing material
+/android/.gradle/
+/android/local.properties
+/android/app/src/main/assets/web/
+*.jks
+*.keystore
+*.p12
+*.apk

@@ -1,0 +1,65 @@
+name: Build Android app
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '!android/release/**'
+      - 'src/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'package*.json'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: node_modules/.cache/study-voice
+          key: vosk-cn-0.22-ustar2-${{ runner.os }}
+      - run: npm test && npm run build && npm run check:release && node scripts/prepare-android.mjs
+      - run: gradle -p android assembleRelease assembleDebug assembleDebugAndroidTest --stacktrace
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: gradle -p android connectedDebugAndroidTest --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-test-results
+          path: android/app/build/reports/androidTests/
+      - name: Publish unsigned build for local private-key signing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p android-build
+          cp android/app/build/outputs/apk/release/app-release-unsigned.apk android-build/
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" android-build/
+          gh release create "android-build-${GITHUB_SHA}" android-build/* --target "$GITHUB_SHA" --prerelease --title 'Android build (unsigned)' --notes 'Unsigned intermediate build for local signing. Not an installable release. Signing keys never enter the repository or CI.'

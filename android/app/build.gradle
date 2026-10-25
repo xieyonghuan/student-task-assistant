@@ -1,0 +1,22 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'cn.shike.study'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'cn.shike.study'
+        minSdk 26
+        targetSdk 35
+        versionCode 110
+        versionName '1.1.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    buildTypes { release { minifyEnabled false } }
+    buildFeatures { buildConfig true }
+    androidResources { noCompress += ['gz', 'wasm'] }
+}
+dependencies {
+    implementation 'androidx.webkit:webkit:1.14.0'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+}
