@@ -15,6 +15,11 @@ permissions:
   contents: write
 jobs:
   build:
+    name: Android ${{ matrix.api }}
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [34, 35]
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -45,7 +50,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ matrix.api }}
           arch: x86_64
           target: google_apis
           disable-animations: true
@@ -54,9 +59,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: android-test-results
+          name: android-test-results-api-${{ matrix.api }}
           path: android/app/build/reports/androidTests/
       - name: Publish unsigned build for local private-key signing
+        if: matrix.api == 35
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

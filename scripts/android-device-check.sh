@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set +e
 adb logcat -c
+adb shell wm size 1264x2780
+adb shell wm density 480
+adb shell settings put secure show_ime_with_hard_keyboard 1
 gradle -p android connectedDebugAndroidTest --stacktrace
 result=$?
 mkdir -p android/app/build/reports/androidTests/device

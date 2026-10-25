@@ -55,6 +55,7 @@ public final class MainActivity extends Activity {
     }
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
         calendar = new CalendarStore(this);
         web = new WebView(this);
         FrameLayout root = new FrameLayout(this); root.setBackgroundColor(Color.rgb(242, 245, 252));
@@ -62,13 +63,23 @@ public final class MainActivity extends Activity {
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-                view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                android.graphics.Insets ime = insets.getInsets(WindowInsets.Type.ime());
+                view.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, ime.bottom));
+                boolean keyboard = insets.isVisible(WindowInsets.Type.ime());
+                web.post(() -> web.evaluateJavascript("document.documentElement?.classList.toggle('keyboard-open', " + keyboard + ")", null));
+                if (keyboard) web.postDelayed(() -> web.evaluateJavascript("(()=>{const e=document.activeElement;if(e&&/^(INPUT|TEXTAREA)$/.test(e.tagName))e.scrollIntoView({block:'nearest',inline:'nearest'});})()", null), 100);
+                // The native container already avoids bars, cutouts and IME.
+                // Forward zero values so newer WebViews do not apply them twice.
+                return new WindowInsets.Builder(insets)
+                    .setInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime(), android.graphics.Insets.NONE)
+                    .setDisplayCutout(null).build();
             } else view.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(), insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
             return insets;
         });
         web.setBackgroundColor(Color.rgb(242, 245, 252));
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true);
+        settings.setTextZoom(Math.round(100 * getResources().getConfiguration().fontScale));
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setMediaPlaybackRequiresUserGesture(false);

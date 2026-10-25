@@ -6,6 +6,8 @@ import path from 'node:path';
 import { applySignature } from './apply-android-signature.mjs';
 
 const [baseCommit, toolsDir, javaDir] = process.argv.slice(2);
+const {version} = JSON.parse(await readFile('package.json','utf8'));
+if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Invalid app version');
 if (!/^[a-f0-9]{40}$/.test(baseCommit || '')) throw new Error('Provide the reviewed Android build commit');
 const privateDir = path.resolve('../work/private/android-signing');
 await mkdir(privateDir, {recursive:true});
@@ -18,7 +20,7 @@ catch {
   execFileSync(keytool, ['-genkeypair','-keystore',key,'-storetype','PKCS12','-alias','shike','-keyalg','RSA','-keysize','3072','-sigalg','SHA256withRSA','-validity','10000','-dname','CN=Shike, O=Personal Study, C=CN','-storepass:file',secret,'-keypass:file',secret], {stdio:'inherit'});
 }
 const unsigned = path.resolve(toolsDir, 'app-release-unsigned.apk');
-const signed = path.resolve('../outputs/shike-v1.1.0.apk');
+const signed = path.resolve(`../outputs/shike-v${version}.apk`);
 const signer = path.resolve(toolsDir, 'apksigner.jar');
 execFileSync(java, ['-jar',signer,'sign','--ks',key,'--ks-key-alias','shike','--ks-pass',`file:${secret}`,'--v1-signing-enabled','false','--v2-signing-enabled','true','--v3-signing-enabled','true','--v4-signing-enabled','false','--out',signed,unsigned], {stdio:'inherit'});
 execFileSync(java, ['-jar',signer,'verify','--verbose','--print-certs',signed], {stdio:'inherit'});
@@ -50,10 +52,10 @@ for(const entry of entries(after).sort((a,b)=>a.start-b.start)){
 }
 literal(after.subarray(cursor));
 if(literalSize>1000000)throw new Error('Unexpected APK metadata size');
-const patch = {format:'shike-apk-signature-v2', baseCommit, baseRelease:`android-build-${baseCommit}`, operations,
+const patch = {format:'shike-apk-signature-v2', version, baseCommit, baseRelease:`android-build-${baseCommit}`, operations,
   bytes:after.length, baseSHA256:hash(before), signedSHA256:hash(after)};
 if (!applySignature(before,patch).equals(after)) throw new Error('APK reconstruction mismatch');
 await mkdir('android/release', {recursive:true});
 await writeFile('android/release/signature.json', JSON.stringify(patch,null,2)+'\n');
-await writeFile('../outputs/shike-v1.1.0.sha256', `${patch.signedSHA256}  shike-v1.1.0.apk\n`);
+await writeFile(`../outputs/shike-v${version}.sha256`, `${patch.signedSHA256}  shike-v${version}.apk\n`);
 console.log(`Signed locally; public signature patch contains ${literalSize} metadata bytes; private key remains in work/private/android-signing.`);

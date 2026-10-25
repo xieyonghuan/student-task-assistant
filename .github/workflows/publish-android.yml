@@ -25,20 +25,23 @@ jobs:
           node --input-type=module <<'JS'
           import fs from 'node:fs';
           const patch=JSON.parse(fs.readFileSync('android/release/signature.json','utf8'));
+          const {version}=JSON.parse(fs.readFileSync('package.json','utf8'));
           if(!/^[a-f0-9]{40}$/.test(patch.baseCommit)||patch.baseRelease!=='android-build-'+patch.baseCommit)throw Error('Invalid source build');
-          fs.appendFileSync(process.env.GITHUB_OUTPUT,`tag=${patch.baseRelease}\ncommit=${patch.baseCommit}\n`);
+          if(!/^\d+\.\d+\.\d+$/.test(patch.version)||patch.version!==version)throw Error('Signature version does not match app version');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,`tag=${patch.baseRelease}\ncommit=${patch.baseCommit}\nversion=${version}\n`);
           JS
       - name: Download exact unsigned build
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_TAG: ${{ steps.build.outputs.tag }}
         run: gh release download "$BUILD_TAG" --dir android-build
-      - run: node scripts/apply-android-signature.mjs android-build/app-release-unsigned.apk shike-v1.1.0.apk
-      - run: java -jar android-build/apksigner.jar verify --verbose --print-certs shike-v1.1.0.apk
+      - run: node scripts/apply-android-signature.mjs android-build/app-release-unsigned.apk shike-v${{ steps.build.outputs.version }}.apk
+      - run: java -jar android-build/apksigner.jar verify --verbose --print-certs shike-v${{ steps.build.outputs.version }}.apk
       - name: Publish installable APK
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_COMMIT: ${{ steps.build.outputs.commit }}
+          APP_VERSION: ${{ steps.build.outputs.version }}
         run: |
-          sha256sum shike-v1.1.0.apk > shike-v1.1.0.sha256
-          gh release create v1.1.0 shike-v1.1.0.apk shike-v1.1.0.sha256 --target "$SOURCE_COMMIT" --title '拾课 v1.1.0 · 自动同步系统日历' --notes-file android/RELEASE.md
+          sha256sum "shike-v${APP_VERSION}.apk" > "shike-v${APP_VERSION}.sha256"
+          gh release create "v${APP_VERSION}" "shike-v${APP_VERSION}.apk" "shike-v${APP_VERSION}.sha256" --target "$SOURCE_COMMIT" --title "拾课 v${APP_VERSION} · 手机与平板适配" --notes-file android/RELEASE.md

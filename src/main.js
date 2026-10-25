@@ -1,4 +1,6 @@
 import './style.css';
+import './mobile.css';
+import { watchMobileViewport } from './viewport.js';
 import { version as APP_VERSION } from '../package.json';
 import { installState, installApp, onInstallChange } from './install.js';
 import { PAGES, readRoute, renderLearningPage } from './pages.js';
@@ -463,6 +465,7 @@ document.addEventListener('click', event => {
 window.addEventListener('hashchange', () => { state.view = readRoute(); state.query = ''; render(); window.scrollTo({ top: 0 }); });
 
 async function start() {
+  watchMobileViewport();
   if (!Object.values(PAGES).some(p => `#${p.route}` === location.hash)) history.replaceState(null, '', '#/home');
   try { state.tasks = await loadTasks(); }
   catch { state.storageError = true; }
