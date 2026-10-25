@@ -16,6 +16,7 @@ const java = path.join(javaDir, process.platform === 'win32' ? 'java.exe' : 'jav
 const keytool = path.join(javaDir, process.platform === 'win32' ? 'keytool.exe' : 'keytool');
 try { await access(key); }
 catch {
+  if (version !== '1.1.0') throw new Error('Original signing key is missing; refusing to generate a different key for an upgrade');
   await writeFile(secret, randomBytes(48).toString('base64url'), {mode:0o600});
   execFileSync(keytool, ['-genkeypair','-keystore',key,'-storetype','PKCS12','-alias','shike','-keyalg','RSA','-keysize','3072','-sigalg','SHA256withRSA','-validity','10000','-dname','CN=Shike, O=Personal Study, C=CN','-storepass:file',secret,'-keypass:file',secret], {stdio:'inherit'});
 }
@@ -23,7 +24,10 @@ const unsigned = path.resolve(toolsDir, 'app-release-unsigned.apk');
 const signed = path.resolve(`../outputs/shike-v${version}.apk`);
 const signer = path.resolve(toolsDir, 'apksigner.jar');
 execFileSync(java, ['-jar',signer,'sign','--ks',key,'--ks-key-alias','shike','--ks-pass',`file:${secret}`,'--v1-signing-enabled','false','--v2-signing-enabled','true','--v3-signing-enabled','true','--v4-signing-enabled','false','--out',signed,unsigned], {stdio:'inherit'});
-execFileSync(java, ['-jar',signer,'verify','--verbose','--print-certs',signed], {stdio:'inherit'});
+const verification=execFileSync(java, ['-jar',signer,'verify','--verbose','--print-certs',signed], {encoding:'utf8'});
+process.stdout.write(verification);
+const certificateSHA256=(await readFile('android/signing-certificate.sha256','utf8')).trim();
+if(verification.match(/Signer #1 certificate SHA-256 digest: ([a-f0-9]+)/)?.[1]!==certificateSHA256)throw new Error('APK signing certificate differs from v1.1; refusing to publish an incompatible upgrade');
 const before = await readFile(unsigned), after = await readFile(signed);
 const hash = data => createHash('sha256').update(data).digest('hex');
 function entries(data) {
@@ -52,7 +56,7 @@ for(const entry of entries(after).sort((a,b)=>a.start-b.start)){
 }
 literal(after.subarray(cursor));
 if(literalSize>1000000)throw new Error('Unexpected APK metadata size');
-const patch = {format:'shike-apk-signature-v2', version, baseCommit, baseRelease:`android-build-${baseCommit}`, operations,
+const patch = {format:'shike-apk-signature-v2', version, certificateSHA256, baseCommit, baseRelease:`android-build-${baseCommit}`, operations,
   bytes:after.length, baseSHA256:hash(before), signedSHA256:hash(after)};
 if (!applySignature(before,patch).equals(after)) throw new Error('APK reconstruction mismatch');
 await mkdir('android/release', {recursive:true});

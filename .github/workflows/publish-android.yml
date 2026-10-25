@@ -36,7 +36,18 @@ jobs:
           BUILD_TAG: ${{ steps.build.outputs.tag }}
         run: gh release download "$BUILD_TAG" --dir android-build
       - run: node scripts/apply-android-signature.mjs android-build/app-release-unsigned.apk shike-v${{ steps.build.outputs.version }}.apk
-      - run: java -jar android-build/apksigner.jar verify --verbose --print-certs shike-v${{ steps.build.outputs.version }}.apk
+      - name: Verify Android signature and the original upgrade certificate
+        env:
+          APP_VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          java -jar android-build/apksigner.jar verify --verbose --print-certs "shike-v${APP_VERSION}.apk" | tee signature-check.txt
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const expected=fs.readFileSync('android/signing-certificate.sha256','utf8').trim();
+          const actual=fs.readFileSync('signature-check.txt','utf8').match(/Signer #1 certificate SHA-256 digest: ([a-f0-9]+)/)?.[1];
+          if(actual!==expected)throw Error('APK certificate differs from the original release');
+          JS
       - name: Publish installable APK
         env:
           GH_TOKEN: ${{ github.token }}
