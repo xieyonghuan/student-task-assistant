@@ -35,6 +35,63 @@ test('Android removes web chrome, puts privacy above settings and remembers a co
   await page.screenshot({ path: '../outputs/shike-android-sidebar-collapsed.png', fullPage: true });
   await page.getByRole('button', { name: '展开侧栏', exact: true }).click();
   await expect(page.getByRole('button', { name: '收起侧栏', exact: true })).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('button', { name: '打开设置', exact: true })).toHaveCount(0);
+  await page.locator('.sidebar [data-view="home"]').click();
+  await page.getByRole('button', { name: '打开设置', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '你的本地学习空间', exact: true })).toBeVisible();
+});
+
+test('expanded tablet navigation keeps icons, labels and counts inside separate full-width rows', async ({ page }) => {
+  await android(page);
+  for (const [width, height] of [[651, 1000], [800, 1280], [900, 1280], [901, 1280], [1100, 800], [1280, 800]]) {
+    await page.setViewportSize({ width, height });
+    for (const textScale of [1, 1.3]) {
+      await page.locator('.sidebar .nav-item').evaluateAll((items, scale) => {
+        for (const item of items) item.style.fontSize = `${12 * scale}px`;
+      }, textScale);
+      const rows = await page.locator('.sidebar .nav-item').evaluateAll(items => items.map(item => {
+        const box = item.getBoundingClientRect();
+        const parts = [...item.children].map(child => child.getBoundingClientRect().toJSON());
+        return { box: box.toJSON(), parts, parentWidth: item.parentElement.clientWidth, width: item.clientWidth, scrollWidth: item.scrollWidth };
+      }));
+      for (const [index, row] of rows.entries()) {
+        expect(row.box.width, `${width}px row ${index}`).toBeCloseTo(row.parentWidth, 0);
+        expect(row.scrollWidth).toBeLessThanOrEqual(row.width);
+        for (const [partIndex, part] of row.parts.entries()) {
+          expect(part.left).toBeGreaterThanOrEqual(row.box.left);
+          expect(part.right).toBeLessThanOrEqual(row.box.right);
+          expect(part.top).toBeGreaterThanOrEqual(row.box.top);
+          expect(part.bottom).toBeLessThanOrEqual(row.box.bottom);
+          if (partIndex) expect(part.left).toBeGreaterThanOrEqual(row.parts[partIndex - 1].right);
+        }
+        if (index) expect(row.box.top).toBeGreaterThanOrEqual(rows[index - 1].box.bottom);
+      }
+    }
+    await page.getByRole('button', { name: '收起侧栏', exact: true }).click();
+    await expect(page.locator('.sidebar .nav-item > span').first()).toBeHidden();
+    await page.getByRole('button', { name: '展开侧栏', exact: true }).click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+});
+
+test('Android tablet settings is available only at home across task and import routes', async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 1280 });
+  await android(page);
+  for (const view of ['all', 'upcoming', 'overdue', 'undated', 'completed']) {
+    await page.locator(`.sidebar [data-view="${view}"]`).click();
+    await expect(page.locator('[data-action="settings"]')).toHaveCount(0);
+    await expect(page.locator('.native-footer')).toHaveCount(0);
+  }
+  await page.locator('.sidebar [data-view="home"]').click();
+  await expect(page.getByRole('button', { name: '打开设置', exact: true })).toBeInViewport();
+  await page.getByRole('button', { name: /识别课程截图/ }).click();
+  await expect(page.locator('[data-action="settings"]')).toHaveCount(0);
+  await page.locator('#notification-text').fill('完成数学第三章习题\n2026年12月30日截止');
+  await page.getByRole('button', { name: '从文字提取任务', exact: true }).click();
+  await expect(page).toHaveURL(/#\/import\/review$/);
+  await expect(page.locator('[data-action="settings"]')).toHaveCount(0);
+  await page.getByRole('button', { name: '退出添加', exact: true }).click();
+  await expect(page.getByRole('button', { name: '打开设置', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '打开设置', exact: true }).click();
   await expect(page.getByRole('heading', { name: '你的本地学习空间', exact: true })).toBeVisible();
 });

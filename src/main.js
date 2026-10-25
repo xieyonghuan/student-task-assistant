@@ -116,7 +116,7 @@ function render() {
       ${renderLearningPage(state, n, icon, esc)}
 
 
-      ${native ? `</div><footer class="native-footer"><div class="native-utility"><span class="privacy-badge">${icon('shield')} 本地私密存储</span><button class="button button-light" data-action="settings" aria-label="打开设置">${icon('settings')}<span>设置与帮助</span></button></div></footer>` : `<footer class="workspace-foot"><span>${icon('shield')} 安心学习，数据只属于你</span><span>拾课 · 学习任务助手</span></footer>`}
+      ${native ? `</div>${state.view === 'home' ? `<footer class="native-footer"><div class="native-utility"><span class="privacy-badge">${icon('shield')} 本地私密存储</span><button class="button button-light" data-action="settings" aria-label="打开设置">${icon('settings')}<span>设置与帮助</span></button></div></footer>` : ''}` : `<footer class="workspace-foot"><span>${icon('shield')} 安心学习，数据只属于你</span><span>拾课 · 学习任务助手</span></footer>`}
     </main></div>`;
   applySidebarState();
   if (isImportView(state.view)) {
