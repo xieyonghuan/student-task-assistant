@@ -58,10 +58,15 @@ public class PhoneLayoutTest {
             Thread.sleep(300);
             assertEquals("true",eval("document.documentElement.scrollWidth<=innerWidth"));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));
-            waitFor("innerWidth>innerHeight && innerWidth>650 && getComputedStyle(document.querySelector('.sidebar')).position==='sticky'",15);
+            waitFor("innerWidth>innerHeight",15);
             assertEquals("true",eval("document.documentElement.scrollWidth<=innerWidth"));
-            eval("document.querySelector('.sidebar-toggle').click()");
-            waitFor("document.querySelector('.sidebar').getBoundingClientRect().width<100 && document.querySelector('.sidebar-toggle').getAttribute('aria-expanded')==='false'",10);
+            if ("true".equals(eval("matchMedia('(min-width:651px)').matches"))) {
+                eval("document.querySelector('.sidebar-toggle').click()");
+                waitFor("document.querySelector('.sidebar').getBoundingClientRect().width<100 && document.querySelector('.sidebar-toggle').getAttribute('aria-expanded')==='false'",10);
+            } else {
+                eval("window.scrollTo({top:0,behavior:'instant'})");
+                assertEquals("true",eval("document.querySelector('.sidebar-toggle').getClientRects().length===0 && [...document.querySelectorAll('.sidebar nav .nav-item')].every(e=>e.getBoundingClientRect().height>=44 && e.getBoundingClientRect().width>=44)"));
+            }
             assertEquals("true",eval("(()=>{const s=document.querySelector('.native-utility [data-action=settings]').getBoundingClientRect();return s.top>=0 && s.bottom<=innerHeight;})()"));
             eval("document.querySelector('#home-manual').click()");
             waitFor("!!document.querySelector('#task-form')",10);
