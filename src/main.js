@@ -1,6 +1,7 @@
 import './style.css';
 import './mobile.css';
 import './task-ui.css';
+import './android-ui.css';
 import { watchMobileViewport } from './viewport.js';
 import { version as APP_VERSION } from '../package.json';
 import { installState, installApp, onInstallChange } from './install.js';
@@ -42,9 +43,12 @@ const paths = {
   spark: '<path d="m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 6-6 4 4 3-3 5 5"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9 9a3 3 0 1 1 5 2c-2 1-2 2-2 3m0 3v.1"/>',
+  panel: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16m5-12-3 4 3 4"/>',
 };
 const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.book}</svg>`;
 const state = { tasks: [], view: readRoute(), query: '', offlineReady: false, resourceBytes: 0, storageError: false, calendarError: '' };
+try { state.sidebarCollapsed = localStorage.getItem('shike-sidebar-collapsed') === 'true'; }
+catch { state.sidebarCollapsed = false; }
 let importSession;
 const isImportView = view => ['capture', 'review'].includes(view);
 let toastTimer;
@@ -66,44 +70,61 @@ function counts() {
 }
 function navItem(view, label, symbol, count) {
   const active = state.view === view || (view === 'home' && isImportView(state.view));
-  return `<button class="nav-item ${active ? 'active' : ''}" data-view="${view}" aria-label="${label}${count === null ? '' : `，${count} 项`}" ${active ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span>${count === null ? '' : `<span class="nav-count">${count}</span>`}</button>`;
+  return `<button class="nav-item ${active ? 'active' : ''}" data-view="${view}" title="${label}" aria-label="${label}${count === null ? '' : `，${count} 项`}" ${active ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span>${count === null ? '' : `<span class="nav-count">${count}</span>`}</button>`;
+}
+function applySidebarState() {
+  document.documentElement.classList.toggle('sidebar-collapsed', isNativeApp() && state.sidebarCollapsed);
+  const button = $('.sidebar-toggle');
+  if (button) {
+    const label = state.sidebarCollapsed ? '展开侧栏' : '收起侧栏';
+    button.setAttribute('aria-expanded', String(!state.sidebarCollapsed));
+    button.setAttribute('aria-label', label); button.title = label;
+  }
+}
+function scrollPageToTop() {
+  window.scrollTo({ top: 0, behavior: 'instant' });
+  $('.native-content')?.scrollTo({ top: 0, behavior: 'instant' });
 }
 function render() {
   if (isImportView(state.view) && !importSession) { startImport(); return; }
   if (state.view === 'review' && !importSession.canReview()) { history.replaceState(null, '', '#' + PAGES.capture.route); state.view = 'capture'; }
   const n = counts();
   const page = PAGES[state.view];
+  const native = isNativeApp();
+  document.documentElement.classList.toggle('native-app', native);
   document.documentElement.classList.toggle('import-open', isImportView(state.view));
   const keepImportPosition = isImportView(state.view) && $('.workspace')?.dataset.page === state.view;
   const previousScroll = keepImportPosition ? { left: scrollX, top: scrollY } : null;
+  const contentScroll = keepImportPosition ? $('.native-content')?.scrollTop : null;
   const inputFocus = keepImportPosition && importSession.element.contains(document.activeElement) ? document.activeElement : null;
   const installed = isNativeApp() || installState().installed;
   document.title = `${page.title} · 拾课`;
   const date = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date());
   $('#app').innerHTML = `<div class="app-shell">
-    <aside class="sidebar glass"><a class="brand" href="#/home" aria-label="拾课首页"><span class="brand-mark">${icon('book')}</span><span>拾课<small>STUDY SPACE</small></span></a>
-      <p class="nav-caption">我的学习</p><nav aria-label="任务分类">
+    <aside class="sidebar glass"><div class="sidebar-heading"><a class="brand" href="#/home" aria-label="拾课首页"><span class="brand-mark">${icon('book')}</span><span>拾课<small>STUDY SPACE</small></span></a>${native ? `<button class="icon-button sidebar-toggle" data-action="sidebar-toggle" aria-label="收起侧栏" aria-expanded="true" aria-controls="learning-navigation">${icon('panel')}</button>` : ''}</div>
+      <p class="nav-caption">我的学习</p><nav id="learning-navigation" aria-label="任务分类">
         ${navItem('home', '首页', 'home', null)}
         ${navItem('all', '全部待办', 'grid', n.all)}${navItem('upcoming', '即将截止', 'clock', n.upcoming)}${navItem('overdue', '已逾期', 'alert', n.overdue)}${navItem('undated', '暂无截止日期', 'inbox', n.undated)}
         <div class="nav-divider"></div>${navItem('completed', '已完成', 'circle', n.completed)}
       </nav>
-      <div class="sidebar-bottom"><div class="offline-card"><span class="status-dot ${state.offlineReady ? 'ready' : ''}"></span><strong>${state.offlineReady ? '离线资源已就绪' : '准备你的离线空间'}</strong><p>${state.offlineReady ? '识别与任务管理，无需联网' : '首次准备后，断网也能识别'}</p><button class="text-button" data-action="settings">${state.offlineReady ? '管理本地数据' : '准备离线使用'} ${icon('arrow')}</button></div>
-      <button class="nav-item settings-nav" data-action="settings" aria-label="设置与帮助">${icon('settings')}<span>设置与帮助</span></button><div class="sidebar-foot">只留在你的设备上 ${icon('shield')}</div></div>
+      ${native ? `<div class="sidebar-bottom native-sidebar-status" title="离线识别资源已内置">${icon('shield')}<span>离线识别资源已内置</span></div>` : `<div class="sidebar-bottom"><div class="offline-card"><span class="status-dot ${state.offlineReady ? 'ready' : ''}"></span><strong>${state.offlineReady ? '离线资源已就绪' : '准备你的离线空间'}</strong><p>${state.offlineReady ? '识别与任务管理，无需联网' : '首次准备后，断网也能识别'}</p><button class="text-button" data-action="settings">${state.offlineReady ? '管理本地数据' : '准备离线使用'} ${icon('arrow')}</button></div><button class="nav-item settings-nav" data-action="settings" aria-label="设置与帮助">${icon('settings')}<span>设置与帮助</span></button><div class="sidebar-foot">只留在你的设备上 ${icon('shield')}</div></div>`}
     </aside>
-    <main class="workspace" data-page="${state.view}"><header class="topbar"><span class="breadcrumb">我的学习空间 <span>/</span> ${page.title}</span><div class="topbar-actions"><span class="privacy-badge">${icon('shield')} 本地私密存储</span><button class="button button-light install-button" data-action="install" ${installed ? 'disabled' : ''}>${icon('download')}<span>${installed ? '已安装到桌面' : '安装到桌面'}</span></button><button class="avatar" data-action="settings" aria-label="打开设置">学</button></div></header>
-      <section class="page-heading"><div><p class="eyebrow">${esc(date)}</p><h1>${page.title}</h1><p class="page-subtitle">${page.subtitle}</p></div>${isImportView(state.view) ? `<button class="button button-light" data-action="exit-import">${icon('close')} 退出添加</button>` : state.view === 'home' ? `<button class="button button-light" data-view="all">${icon('calendar')} 查看全部待办</button>` : `<button class="button button-light" data-action="add">${icon('plus')} 手动添加</button>`}</section>
+    <main class="workspace" data-page="${state.view}">${native ? '' : `<header class="topbar"><span class="breadcrumb">我的学习空间 <span>/</span> ${page.title}</span><div class="topbar-actions"><span class="privacy-badge">${icon('shield')} 本地私密存储</span><button class="button button-light install-button" data-action="install" ${installed ? 'disabled' : ''}>${icon('download')}<span>${installed ? '已安装到桌面' : '安装到桌面'}</span></button><button class="avatar" data-action="settings" aria-label="打开设置">学</button></div></header>`}
+      ${native ? '<div class="native-content">' : ''}<section class="page-heading"><div><p class="eyebrow">${esc(date)}</p><h1>${page.title}</h1><p class="page-subtitle">${page.subtitle}</p></div>${isImportView(state.view) ? `<button class="button button-light" data-action="exit-import">${icon('close')} 退出添加</button>` : state.view === 'home' ? `<button class="button button-light" data-view="all">${icon('calendar')} 查看全部待办</button>` : `<button class="button button-light" data-action="add">${icon('plus')} 手动添加</button>`}</section>
       ${state.storageError ? '<div class="error-banner" role="alert">无法打开本地存储。请退出无痕模式、检查存储空间后重新打开。本次无法保存任务。</div>' : ''}
       ${state.calendarError ? `<div class="error-banner" role="alert">任务已保存在拾课中，日历尚未同步：${esc(state.calendarError)} <button class="text-button" data-action="calendar">检查日历同步</button></div>` : ''}
       ${renderLearningPage(state, n, icon, esc)}
 
 
-      <footer class="workspace-foot"><span>${icon('shield')} 安心学习，数据只属于你</span><span>拾课 · 学习任务助手</span></footer>
+      ${native ? `</div><footer class="native-footer"><div class="native-utility"><span class="privacy-badge">${icon('shield')} 本地私密存储</span><button class="button button-light" data-action="settings" aria-label="打开设置">${icon('settings')}<span>设置与帮助</span></button></div></footer>` : `<footer class="workspace-foot"><span>${icon('shield')} 安心学习，数据只属于你</span><span>拾课 · 学习任务助手</span></footer>`}
     </main></div>`;
+  applySidebarState();
   if (isImportView(state.view)) {
     $('#import-page-host').append(importSession.element);
     importSession.setStage(state.view);
     inputFocus?.focus({ preventScroll: true });
     if (previousScroll) window.scrollTo({ ...previousScroll, behavior: 'instant' });
+    if (contentScroll != null) $('.native-content').scrollTop = contentScroll;
   }
   renderTaskList();
   $('#task-search')?.addEventListener('input', event => { state.query = event.target.value; renderTaskList(); });
@@ -270,7 +291,7 @@ function startImport(example = false, initialText = '', mode = 'image') {
   function goTo(view, replace = false) {
     if (location.hash !== '#' + PAGES[view].route) history[replace ? 'replaceState' : 'pushState'](null, '', '#' + PAGES[view].route);
     state.view = view; state.query = ''; render();
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    scrollPageToTop();
     const heading = $('.review-heading, .review-done h3, #ocr-message', panel);
     if (view === 'review' && heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
   }
@@ -489,7 +510,12 @@ document.addEventListener('click', event => {
   const button = event.target.closest('[data-action]');
   if (!button) return;
   const { action, id } = button.dataset;
-  if (action === 'import') startImport();
+  if (action === 'sidebar-toggle') {
+    state.sidebarCollapsed = !state.sidebarCollapsed;
+    try { localStorage.setItem('shike-sidebar-collapsed', String(state.sidebarCollapsed)); } catch { /* Keep the current layout usable when preferences cannot be stored. */ }
+    applySidebarState();
+  }
+  else if (action === 'import') startImport();
   else if (action === 'example') startImport(true);
   else if (action === 'exit-import') location.hash = PAGES[importSession.returnView].route;
   else if (action === 'voice') safely(async () => {
@@ -523,7 +549,7 @@ document.addEventListener('click', event => {
 window.addEventListener('hashchange', () => {
   state.view = readRoute(); state.query = '';
   if (!isImportView(state.view) && importSession) { importSession.dispose(); importSession = undefined; }
-  render(); window.scrollTo({ top: 0 });
+  render(); scrollPageToTop();
 });
 
 async function start() {

@@ -30,6 +30,8 @@ public class PhoneLayoutTest {
         activity=(MainActivity)InstrumentationRegistry.getInstrumentation().startActivitySync(new Intent(InstrumentationRegistry.getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try {
             waitFor("!!document.querySelector('.home-capture')",40);
+            assertEquals("true",eval("!document.querySelector('.topbar') && !document.querySelector('[data-action=install]') && getComputedStyle(document.querySelector('.native-utility .privacy-badge')).display!=='none'"));
+            assertEquals("true",eval("(()=>{const s=document.querySelector('.native-utility [data-action=settings]').getBoundingClientRect();const m=document.querySelector('#home-manual').getBoundingClientRect();return s.x>innerWidth/2 && s.top<100 && s.width>=44 && m.bottom<=document.querySelector('.sidebar').getBoundingClientRect().top;})()"));
             assertEquals("true",eval("innerWidth>=350 && innerWidth<=450 && document.documentElement.scrollWidth<=innerWidth"));
             assertEquals("true",eval("[...document.querySelectorAll('.sidebar nav .nav-item')].every(e=>e.getBoundingClientRect().height>=44 && e.getBoundingClientRect().width>=44)"));
             eval("document.querySelector('#home-manual').click()");
@@ -58,6 +60,9 @@ public class PhoneLayoutTest {
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));
             waitFor("innerWidth>innerHeight",15);
             assertEquals("true",eval("document.documentElement.scrollWidth<=innerWidth"));
+            eval("document.querySelector('.sidebar-toggle').click()");
+            assertEquals("true",eval("document.querySelector('.sidebar').getBoundingClientRect().width<100 && document.querySelector('.sidebar-toggle').getAttribute('aria-expanded')==='false'"));
+            assertEquals("true",eval("(()=>{const s=document.querySelector('.native-utility [data-action=settings]').getBoundingClientRect();return s.top>=0 && s.bottom<=innerHeight;})()"));
             eval("document.querySelector('#home-manual').click()");
             waitFor("!!document.querySelector('#task-form')",10);
             eval("document.querySelector('dialog .modal-body').scrollTop=10000");
