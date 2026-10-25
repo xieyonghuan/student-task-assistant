@@ -21,7 +21,14 @@ public class BundledAppTest {
     }
     private void waitFor(String expression, int seconds) throws Exception {
         long until = System.currentTimeMillis() + seconds * 1000L;
-        while (System.currentTimeMillis() < until) { if ("true".equals(eval(expression))) return; Thread.sleep(250); }
+        while (System.currentTimeMillis() < until) {
+            if ("true".equals(eval(expression))) return;
+            if ("true".equals(eval("document.querySelector('#review-panel')?.innerText.includes('这次没有识别完成') || (!!window.__voice && !['loading','ready'].includes(window.__voice))"))) break;
+            Thread.sleep(250);
+        }
+        System.out.println("SHIKE_ASSETS " + LocalAssets.debugRequests);
+        System.out.println("SHIKE_WORKERS " + eval("JSON.stringify(window.__workerTrace)"));
+        System.out.println("SHIKE_VOICE " + eval("window.__voice"));
         fail("App did not become ready: " + expression + "; page: " + eval("document.body.innerText.slice(-2000)"));
     }
     @Test public void localWebViewBridgeChineseOCRAndRealVoiceModelWorkWithoutRemoteAssets() throws Exception {
@@ -33,6 +40,7 @@ public class BundledAppTest {
             waitFor("window.__probe?.ok===true", 15);
             assertEquals("true", eval("window.__probe.result.available"));
             assertEquals("true", eval("location.origin==='http://127.0.0.1:48731' && isSecureContext"));
+            eval("window.__workerTrace=[];const NativeWorker=window.Worker;window.Worker=class extends NativeWorker{constructor(...args){super(...args);window.__workerTrace.push(String(args[0]));this.addEventListener('message',e=>{if(window.__workerTrace.length<100)window.__workerTrace.push(JSON.stringify(e.data).slice(0,500))});this.addEventListener('error',e=>window.__workerTrace.push(e.message))}};");
             eval("document.querySelector('[data-action=import]').click()");
             waitFor("!!document.querySelector('#screenshot-file')", 10);
             eval("(() => {const c=document.createElement('canvas');c.width=1400;c.height=450;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,1400,450);x.fillStyle='#111';x.font='48px sans-serif';['完成数学第三章习题','截止时间：2026年12月30日 23:59','要求：写出计算过程。'].forEach((line,i)=>x.fillText(line,60,90+i*100));c.toBlob(blob=>{const d=new DataTransfer();d.items.add(new File([blob],'notice.png',{type:'image/png'}));const input=document.querySelector('#screenshot-file');input.files=d.files;input.dispatchEvent(new Event('change',{bubbles:true}));});})();");

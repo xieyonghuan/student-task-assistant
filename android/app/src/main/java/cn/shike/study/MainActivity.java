@@ -115,6 +115,10 @@ public final class MainActivity extends Activity {
                 } catch (Exception ignored) { /* Invalid messages cannot invoke a platform operation. */ }
             });
         web.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
+                if(BuildConfig.DEBUG) android.util.Log.i("ShikeWeb", message.message());
+                return true;
+            }
             @Override public void onPermissionRequest(PermissionRequest request) {
                 runOnUiThread(() -> {
                     if (!local(request.getOrigin()) || !Arrays.asList(request.getResources()).contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) { request.deny(); return; }

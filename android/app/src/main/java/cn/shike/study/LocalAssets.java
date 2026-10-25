@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 final class LocalAssets {
     static final int PORT = 48731;
     private static LocalAssets instance;
+    static final StringBuilder debugRequests = new StringBuilder();
     private final Context context;
     private final ServerSocket server;
     private final ExecutorService readers = Executors.newFixedThreadPool(8);
@@ -59,6 +60,7 @@ final class LocalAssets {
             String file=request[1].split("\\?",2)[0];
             if(!file.matches("/[A-Za-z0-9_./-]*")||file.contains("..")||file.contains("//")){error(output,403);return;}
             if(file.equals("/"))file="/index.html";
+            if(BuildConfig.DEBUG) synchronized(debugRequests) { if(debugRequests.length()<10000)debugRequests.append(file).append('\n'); }
             String asset="web"+file;
             InputStream body; long length;
             try {
