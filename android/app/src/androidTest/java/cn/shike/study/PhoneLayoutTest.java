@@ -24,7 +24,7 @@ public class PhoneLayoutTest {
     private void waitFor(String script,int seconds) throws Exception {
         long end=System.currentTimeMillis()+seconds*1000L;
         while(System.currentTimeMillis()<end){if("true".equals(eval(script)))return;Thread.sleep(200);}
-        fail("Phone layout did not become ready: "+script+"; "+eval("JSON.stringify({w:innerWidth,h:innerHeight,keyboard:document.documentElement.className,focused:document.activeElement?.tagName})"));
+        fail("Phone layout did not become ready: "+script+"; "+eval("JSON.stringify({w:innerWidth,h:innerHeight,classes:document.documentElement.className,focused:document.activeElement?.tagName,sidebar:document.querySelector('.sidebar')?.getBoundingClientRect().width,expanded:document.querySelector('.sidebar-toggle')?.getAttribute('aria-expanded'),tablet:matchMedia('(min-width:651px)').matches})"));
     }
     @Test public void phoneKeyboardRotationAndLargeTextKeepFormsAndActionsReachable() throws Exception {
         activity=(MainActivity)InstrumentationRegistry.getInstrumentation().startActivitySync(new Intent(InstrumentationRegistry.getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -58,10 +58,10 @@ public class PhoneLayoutTest {
             Thread.sleep(300);
             assertEquals("true",eval("document.documentElement.scrollWidth<=innerWidth"));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));
-            waitFor("innerWidth>innerHeight",15);
+            waitFor("innerWidth>innerHeight && innerWidth>650 && getComputedStyle(document.querySelector('.sidebar')).position==='sticky'",15);
             assertEquals("true",eval("document.documentElement.scrollWidth<=innerWidth"));
             eval("document.querySelector('.sidebar-toggle').click()");
-            assertEquals("true",eval("document.querySelector('.sidebar').getBoundingClientRect().width<100 && document.querySelector('.sidebar-toggle').getAttribute('aria-expanded')==='false'"));
+            waitFor("document.querySelector('.sidebar').getBoundingClientRect().width<100 && document.querySelector('.sidebar-toggle').getAttribute('aria-expanded')==='false'",10);
             assertEquals("true",eval("(()=>{const s=document.querySelector('.native-utility [data-action=settings]').getBoundingClientRect();return s.top>=0 && s.bottom<=innerHeight;})()"));
             eval("document.querySelector('#home-manual').click()");
             waitFor("!!document.querySelector('#task-form')",10);
