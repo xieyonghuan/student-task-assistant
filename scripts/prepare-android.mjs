@@ -1,8 +1,18 @@
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile, readdir, rename } from 'node:fs/promises';
 import path from 'node:path';
 const target = path.resolve('android/app/src/main/assets/web');
 await mkdir(target, { recursive: true });
 await cp(path.resolve('dist'), target, { recursive: true });
+// AAPT otherwise gunzips .gz assets and strips their suffix. Keep their exact
+// bytes under .bin in the APK; the loopback asset handler maps the public URL.
+async function protectArchives(dir) {
+  for (const item of await readdir(dir, {withFileTypes:true})) {
+    const file=path.join(dir,item.name);
+    if(item.isDirectory()) await protectArchives(file);
+    else if(item.name.endsWith('.gz')) await rename(file,file+'.bin');
+  }
+}
+await protectArchives(target);
 // Forward initialization failures from older Android WebViews to Tesseract's
 // normal job rejection channel instead of leaving its ready promise pending.
 const worker = path.join(target, 'ocr/worker.min.js');

@@ -84,7 +84,10 @@ export async function recognizeImage(file, onProgress) {
     const worker = await createWorker(['chi_sim', 'eng'], 1, {
       workerPath: appURL('ocr/worker.min.js'), corePath: appURL('ocr/core'), langPath: appURL('ocr/lang'),
       workerBlobURL: false, cacheMethod: 'none',
-      errorHandler() { /* Rejections are handled by the import dialog. */ },
+      errorHandler(error) {
+        job.cancelled = true;
+        job.rejectCancel?.(new Error(String(error?.message || error || '本地识别没有完成，请重试。')));
+      },
       logger(message) {
         if (job.cancelled || job.refining) return;
         if (message.status === 'recognizing text') onProgress('正在识别截图中的文字', 0.35 + message.progress * 0.6);

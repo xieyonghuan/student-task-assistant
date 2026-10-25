@@ -26,7 +26,7 @@ public class BundledAppTest {
             if ("true".equals(eval("document.querySelector('#review-panel')?.innerText.includes('这次没有识别完成') || (!!window.__voice && !['loading','ready'].includes(window.__voice))"))) break;
             Thread.sleep(250);
         }
-        System.out.println("SHIKE_ASSETS " + LocalAssets.debugRequests);
+        System.out.println("SHIKE_ASSETS " + MainActivity.debugRequests);
         System.out.println("SHIKE_WORKERS " + eval("JSON.stringify(window.__workerTrace)"));
         System.out.println("SHIKE_VOICE " + eval("window.__voice"));
         fail("App did not become ready: " + expression + "; page: " + eval("document.body.innerText.slice(-2000)"));
@@ -39,7 +39,7 @@ public class BundledAppTest {
             eval("window.__probe=null; const prior=ShikeNative.onmessage; ShikeNative.onmessage=e=>{const m=JSON.parse(e.data);if(m.id==='probe')window.__probe=m;else prior?.(e)}; ShikeNative.postMessage(JSON.stringify({id:'probe',method:'calendarStatus',args:{}}));");
             waitFor("window.__probe?.ok===true", 15);
             assertEquals("true", eval("window.__probe.result.available"));
-            assertEquals("true", eval("location.origin==='http://127.0.0.1:48731' && isSecureContext"));
+            assertEquals("true", eval("location.origin==='https://appassets.androidplatform.net' && isSecureContext"));
             eval("window.__workerTrace=[];const NativeWorker=window.Worker;window.Worker=class extends NativeWorker{constructor(...args){super(...args);window.__workerTrace.push(String(args[0]));this.addEventListener('message',e=>{if(window.__workerTrace.length<100)window.__workerTrace.push(JSON.stringify(e.data).slice(0,500))});this.addEventListener('error',e=>window.__workerTrace.push(e.message))}};");
             eval("document.querySelector('[data-action=import]').click()");
             waitFor("!!document.querySelector('#screenshot-file')", 10);

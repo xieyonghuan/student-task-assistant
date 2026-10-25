@@ -37,6 +37,7 @@ jobs:
           key: vosk-cn-0.22-ustar2-${{ runner.os }}
       - run: npm test && npm run build && npm run check:release && node scripts/prepare-android.mjs
       - run: gradle -p android assembleRelease assembleDebug assembleDebugAndroidTest --stacktrace
+      - run: node scripts/check-android-apk.mjs android/app/build/outputs/apk/release/app-release-unsigned.apk
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
