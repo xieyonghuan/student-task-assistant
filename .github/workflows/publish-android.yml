@@ -51,8 +51,8 @@ jobs:
       - name: Publish installable APK
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_COMMIT: ${{ steps.build.outputs.commit }}
           APP_VERSION: ${{ steps.build.outputs.version }}
         run: |
           sha256sum "shike-v${APP_VERSION}.apk" > "shike-v${APP_VERSION}.sha256"
-          gh release create "v${APP_VERSION}" "shike-v${APP_VERSION}.apk" "shike-v${APP_VERSION}.sha256" --target "$SOURCE_COMMIT" --title "拾课 v${APP_VERSION} · 手机与平板适配" --notes-file android/RELEASE.md
+          # Tag the publication commit; the signed manifest pins the exact tested APK source.
+          gh release create "v${APP_VERSION}" "shike-v${APP_VERSION}.apk" "shike-v${APP_VERSION}.sha256" --target "$GITHUB_SHA" --title "拾课 v${APP_VERSION} · 手机与平板适配" --notes-file android/RELEASE.md

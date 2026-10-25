@@ -749,5 +749,6 @@
   ],
   "bytes": 80656423,
   "baseSHA256": "47fad2f591466e49c84c0bca3795bae832d920283f14bc9d0421863c023810bd",
-  "signedSHA256": "cf3569db44efbfe7787392ffc0c3e0807baf4ed7b69ab7509610c420de83a4a2"
+  "signedSHA256": "cf3569db44efbfe7787392ffc0c3e0807baf4ed7b69ab7509610c420de83a4a2",
+  "publication": "Tag the publication commit; baseCommit identifies the tested APK source."
 }
