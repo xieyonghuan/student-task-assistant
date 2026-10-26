@@ -11,11 +11,24 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class SharingTest {
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    private MainActivity activity;
+    private String eval(String script) throws Exception {
+        AtomicReference<String> result = new AtomicReference<>(); CountDownLatch ready = new CountDownLatch(1);
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> activity.browserForTests().evaluateJavascript(script, value -> { result.set(value); ready.countDown(); }));
+        assertTrue(ready.await(15, TimeUnit.SECONDS)); return result.get();
+    }
+    private void waitFor(String script) throws Exception {
+        long until = System.currentTimeMillis() + 180000;
+        while (System.currentTimeMillis() < until) { if ("true".equals(eval(script))) return; Thread.sleep(200); }
+        fail("Dense screenshot pipeline failed: " + eval("document.body.innerText.slice(-1800)"));
+    }
     @Test public void textAndMultipleImageSharesAreCopiedPersistentlyAndConsumedWithoutExternalFileAccess() throws Exception {
         ArrayList<Uri> uris = new ArrayList<>(); String textId = null, imageId = null;
         try {
@@ -54,7 +67,7 @@ public class SharingTest {
             if (imageId != null) ShareStore.consume(context, imageId);
         }
     }
-    @Test public void bundledChineseRecognizerReadsDenseScreenshotWithNoModelDownload() throws Exception {
+    @Test public void bundledChinesePipelineReadsOriginalDenseScreenshotWithNoModelDownload() throws Exception {
         Bitmap bitmap = Bitmap.createBitmap(1264, 2780, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(bitmap); canvas.drawColor(Color.WHITE);
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG); paint.setColor(Color.BLACK); paint.setTextSize(48);
@@ -64,12 +77,24 @@ public class SharingTest {
         for (int i = 0; i < 15; i++) canvas.drawText("Read the assignment and check each step.", 45, 800 + i * 90, paint);
         ByteArrayOutputStream out = new ByteArrayOutputStream(); bitmap.compress(Bitmap.CompressFormat.JPEG, 93, out); bitmap.recycle();
         String encoded = android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP);
-        try (NativeOcr ocr = new NativeOcr()) {
+        activity = (MainActivity) InstrumentationRegistry.getInstrumentation().startActivitySync(new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try {
+            waitFor("!!document.querySelector('.home-capture')");
+            eval("window.confirm=()=>true;document.querySelector('[data-action=import]').click()");
+            waitFor("!!document.querySelector('#screenshot-file')");
             for (int i = 0; i < 2; i++) {
-                JSONObject result = ocr.recognize(encoded); String text = result.getString("text").replaceAll("\\s", "");
-                assertTrue(text, text.contains("数学")); assertTrue(text, text.contains("2026") && text.contains("12") && text.contains("30"));
-                System.out.println("SHIKE_NATIVE_OCR run=" + (i + 1) + " ms=" + result.getLong("elapsedMs"));
+                long start = android.os.SystemClock.elapsedRealtime(); String name = "dense-" + i + ".jpg";
+                eval("(()=>{const bytes=Uint8Array.from(atob(" + JSONObject.quote(encoded) + "),c=>c.charCodeAt(0));const d=new DataTransfer();d.items.add(new File([bytes]," + JSONObject.quote(name) + ",{type:'image/jpeg'}));const input=document.querySelector('#screenshot-file');input.files=d.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()");
+                waitFor("document.querySelector('#source-list')?.innerText.includes(" + JSONObject.quote(name) + ")");
+                waitFor("document.querySelector('#review-form [name=dueDate]')?.value==='2026-12-30'");
+                // Verify final task text from the same original native-rendered
+                // image, rather than accepting a model-specific character error.
+                assertEquals("true", eval("document.querySelector('#notification-text').value.includes('数学')"));
+                assertEquals("true", eval("document.querySelector('#review-form [name=title]').value.includes('数学')"));
+                eval("window.__denseEngine=null;const r=indexedDB.open('shike-study-tasks');r.onsuccess=()=>{const db=r.result;const q=db.transaction('drafts').objectStore('drafts').get('import');q.onsuccess=()=>{window.__denseEngine=q.result?.sources[0]?.engine;db.close();}};");
+                waitFor("window.__denseEngine==='native-chinese+verified'");
+                System.out.println("SHIKE_OCR_PIPELINE run=" + (i + 1) + " ms=" + (android.os.SystemClock.elapsedRealtime() - start));
             }
-        }
+        } finally { InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> activity.finish()); }
     }
 }

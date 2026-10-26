@@ -213,6 +213,7 @@ export function extractTasks(raw, now = new Date()) {
   let current = [];
   const flush = () => { if (current.length) blocks.push(current.join('\n')); current = []; };
   for (const line of lines) {
+    if (!current.length && /^(?:课程|班级|学习)?(?:作业|任务)?通知[:：]?$/.test(line)) continue;
     if (numbered) {
       if (marker.test(line)) { flush(); current.push(line); }
       else if (current.length) current.push(line);

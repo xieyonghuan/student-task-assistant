@@ -7,6 +7,12 @@ test('decimal attachment sizes are not numbered assignments', () => {
   const tasks = extractTasks('课程通知\n12.8 KB\n完成物理练习\n要求：写出步骤');
   assert.equal(tasks.length, 1); assert.equal(tasks[0].title, '完成物理练习');
 });
+test('notice headings do not become an extra task above the actual assignment', () => {
+  const tasks = extractTasks('课程作业通知\n完成数学第三章习题\n截止时间：2026年12月30日 23:59');
+  assert.equal(tasks.length, 1); assert.equal(tasks[0].title, '完成数学第三章习题');
+  assert.equal(tasks[0].dueDate, '2026-12-30');
+  assert.equal(extractTasks('课程作业通知').length, 1);
+});
 test('wrapped attachment and reference message become one task with its deadline and paper requirements', () => {
   const tasks = extractTasks('物理课程群\n作业_2.力学\n练习.pdf\n28.4 KB\n这是第二次作业，请认真完成\n下周三提交\n作业采用整张纸，写上姓名\n@所有人\nThis is the assignment.\n@Everyone\n老师：作业_2.力学练习.pdf', new Date('2026-10-26T12:00:00+08:00'));
   assert.equal(tasks.length, 1); assert.equal(tasks[0].title, '作业_2.力学练习');

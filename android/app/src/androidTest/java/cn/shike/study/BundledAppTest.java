@@ -45,7 +45,6 @@ public class BundledAppTest {
             waitFor("!!document.querySelector('#screenshot-file')", 10);
             eval("(() => {const c=document.createElement('canvas');c.width=1400;c.height=450;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,1400,450);x.fillStyle='#111';x.font='48px sans-serif';['完成数学第三章习题','截止时间：2026年12月30日 23:59','要求：写出计算过程。'].forEach((line,i)=>x.fillText(line,60,90+i*100));c.toBlob(blob=>{const d=new DataTransfer();d.items.add(new File([blob],'notice.png',{type:'image/png'}));const input=document.querySelector('#screenshot-file');input.files=d.files;input.dispatchEvent(new Event('change',{bubbles:true}));});})();");
             waitFor("document.querySelector('#review-form [name=dueDate]')?.value==='2026-12-30'", 180);
-            assertEquals("false", eval("window.__workerTrace.some(line=>line.includes('ocr/worker'))"));
             assertEquals("true", eval("document.querySelector('#notification-text').value.includes('数学')"));
             assertEquals("true", eval("location.hash==='#/import/review' && document.querySelector('.source-panel').hidden && !document.querySelector('#review-panel').hidden"));
             eval("document.querySelector('[data-action=exit-import]').click()");

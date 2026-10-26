@@ -2,9 +2,6 @@ package cn.shike.study;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Paint;
 import android.graphics.Rect;
 import android.util.Base64;
 import com.google.android.gms.tasks.Tasks;
@@ -13,6 +10,7 @@ import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -78,36 +76,6 @@ final class NativeOcr implements AutoCloseable {
         }
         cuts.add(height); return cuts;
     }
-    private String refineTitles(Bitmap tile, com.google.mlkit.vision.text.Text result, long start, int[] budget) throws Exception {
-        String text = result.getText();
-        for (com.google.mlkit.vision.text.Text.TextBlock block : result.getTextBlocks()) {
-            for (com.google.mlkit.vision.text.Text.Line line : block.getLines()) {
-                if (budget[0] <= 0 || android.os.SystemClock.elapsedRealtime() - start > 30000) return text;
-                String original = line.getText(); Rect box = line.getBoundingBox();
-                if (box == null || original.length() > 80 || !original.matches(".*(?:作业|习题|练习|报告|实验|论文|测验|考试).*")) continue;
-                budget[0]--;
-                int left = Math.max(0, box.left - 6), top = Math.max(0, box.top - 6);
-                int width = Math.min(tile.getWidth(), box.right + 6) - left, height = Math.min(tile.getHeight(), box.bottom + 6) - top;
-                if (width <= 0 || height <= 0) continue;
-                float scale = Math.min(3f, Math.max(1f, 64f / height));
-                Bitmap crop = Bitmap.createBitmap(Math.round(width * scale) + 32, Math.round(height * scale) + 32, Bitmap.Config.ARGB_8888);
-                Canvas canvas = new Canvas(crop); canvas.drawColor(Color.WHITE);
-                Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-                canvas.drawBitmap(tile, new Rect(left, top, left + width, top + height), new Rect(16, 16, crop.getWidth() - 16, crop.getHeight() - 16), paint);
-                com.google.android.gms.tasks.Task<com.google.mlkit.vision.text.Text> check = recognizer.process(InputImage.fromBitmap(crop, 0));
-                try {
-                    com.google.mlkit.vision.text.Text candidate = Tasks.await(check, Math.max(1, 45000 - (android.os.SystemClock.elapsedRealtime() - start)), TimeUnit.MILLISECONDS);
-                    String replacement = candidate.getText().replace('\n', ' ').trim();
-                    float confidence = 0; int count = 0;
-                    for (com.google.mlkit.vision.text.Text.TextBlock b : candidate.getTextBlocks()) for (com.google.mlkit.vision.text.Text.Line l : b.getLines()) { confidence += l.getConfidence(); count++; }
-                    confidence /= Math.max(1, count);
-                    if (!replacement.isEmpty() && replacement.length() >= original.length() * 0.7 && replacement.length() <= original.length() * 1.5
-                        && confidence >= Math.max(0.8f, line.getConfidence() - 0.03f)) text = text.replace(original, replacement);
-                } finally { if (check.isComplete()) crop.recycle(); else check.addOnCompleteListener(ignored -> crop.recycle()); }
-            }
-        }
-        return text;
-    }
     JSONObject recognize(String content) throws Exception {
         if (content.length() > 16000000) throw new IllegalArgumentException("图片过大，请裁剪课程通知后重试。");
         byte[] bytes = Base64.decode(content, Base64.DEFAULT);
@@ -120,7 +88,7 @@ final class NativeOcr implements AutoCloseable {
         Bitmap bitmap = fitText(decoded);
         long start = android.os.SystemClock.elapsedRealtime();
         StringBuilder text = new StringBuilder(); ArrayList<Integer> cuts = cuts(bitmap);
-        int[] refinementBudget = { 4 };
+        JSONArray regions = new JSONArray();
         com.google.android.gms.tasks.Task<com.google.mlkit.vision.text.Text> running = null;
         try {
             for (int i = 0; i < cuts.size() - 1; i++) {
@@ -131,13 +99,22 @@ final class NativeOcr implements AutoCloseable {
                 try {
                     if (text.length() > 0) text.append('\n');
                     com.google.mlkit.vision.text.Text result = Tasks.await(task, Math.max(1, 45000 - (android.os.SystemClock.elapsedRealtime() - start)), TimeUnit.MILLISECONDS);
-                    text.append(refineTitles(tile, result, start, refinementBudget));
+                    text.append(result.getText());
+                    for (com.google.mlkit.vision.text.Text.TextBlock block : result.getTextBlocks()) {
+                        for (com.google.mlkit.vision.text.Text.Line line : block.getLines()) {
+                            Rect box = line.getBoundingBox(); String value = line.getText();
+                            boolean title = value.matches(".*(?:作业|习题|练习|报告|实验|论文|测验|考试).*"), date = value.matches(".*[12][0-9]{3}[年/.-].*");
+                            if (regions.length() < 6 && box != null && value.length() <= 100 && (title || date))
+                                regions.put(new JSONObject().put("text", value).put("left", box.left).put("top", box.top + cuts.get(i))
+                                    .put("right", box.right).put("bottom", box.bottom + cuts.get(i)).put("confidence", line.getConfidence()));
+                        }
+                    }
                 } finally {
                     if (tile != bitmap) { if (task.isComplete()) tile.recycle(); else task.addOnCompleteListener(ignored -> tile.recycle()); }
                 }
             }
             return new JSONObject().put("text", text.toString()).put("engine", "native-chinese")
-                .put("elapsedMs", android.os.SystemClock.elapsedRealtime() - start).put("width", bitmap.getWidth()).put("height", bitmap.getHeight());
+                .put("elapsedMs", android.os.SystemClock.elapsedRealtime() - start).put("width", bitmap.getWidth()).put("height", bitmap.getHeight()).put("regions", regions);
         } finally { if (running == null || running.isComplete()) bitmap.recycle(); else running.addOnCompleteListener(ignored -> bitmap.recycle()); }
     }
     @Override public void close() { recognizer.close(); }

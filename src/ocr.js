@@ -133,14 +133,38 @@ async function recognizeNative(file, job) {
   canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
   const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
-  let content;
-  try { content = canvas.toDataURL('image/jpeg', 0.93).split(',')[1]; }
-  finally { canvas.width = canvas.height = 1; }
+  job.canvas = canvas;
+  const content = canvas.toDataURL('image/jpeg', 0.93).split(',')[1];
   if (job.cancelled) throw cancelledError();
   const result = await nativeCall('recognizeImage', { content });
   if (job.cancelled) throw cancelledError();
   if (!result.text?.trim()) throw new Error('本机识别未找到文字。');
-  return { ...result, text: normalizeNotice(result.text) };
+  let text = result.text, warning;
+  if (result.regions?.length) {
+    job.refining = true;
+    job.onProgress('正在核对任务名称与截止日期', 0.85);
+    try {
+      const worker = await workerFor(job);
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_LINE, tessedit_char_whitelist: '' });
+      const sx = canvas.width / result.width, sy = canvas.height / result.height;
+      for (const region of result.regions.slice(0, 6)) {
+        if (job.cancelled) throw cancelledError();
+        const left = Math.max(0, Math.floor(region.left * sx) - 12), top = Math.max(0, Math.floor(region.top * sy) - 12);
+        const right = Math.min(canvas.width, Math.ceil(region.right * sx) + 12), bottom = Math.min(canvas.height, Math.ceil(region.bottom * sy) + 12);
+        if (right <= left || bottom <= top) continue;
+        const crop = document.createElement('canvas'); crop.width = right - left; crop.height = bottom - top;
+        crop.getContext('2d').drawImage(canvas, left, top, crop.width, crop.height, 0, 0, crop.width, crop.height);
+        let check;
+        try { check = await worker.recognize(crop); } finally { crop.width = crop.height = 1; }
+        const replacement = normalizeNotice(check.data.text).trim().replace(/\n+/g, ' ');
+        if (check.data.confidence >= 70 && replacement.length >= region.text.length * 0.6 && replacement.length <= region.text.length * 1.6) text = text.replace(region.text, replacement);
+      }
+    } catch (error) {
+      if (job.cancelled) throw error;
+      warning = '部分任务名称或日期未完成二次核对，请对照原图检查。';
+    }
+  }
+  return { text: normalizeNotice(text), engine: result.regions?.length ? 'native-chinese+verified' : result.engine, warning };
 }
 
 async function refineDateLines(worker, canvas, data, job, onProgress) {
