@@ -5,6 +5,7 @@ import { validateImages, batchDuplicates, hasImportDraft, importFinished } from 
 export function createImportFlow({ restored, example = '', initialText = '', mode = 'image', returnView, ui }) {
   const { $, $$, esc, icon, taskFields, readTaskFields } = ui;
   const model = restored ? structuredClone(restored) : { id: 'import', text: example || initialText, tasks: [], sources: [], saved: 0, skipped: 0, stage: 'capture', overview: false, mode };
+  model.referenceTime ||= model.updatedAt || new Date().toISOString();
   for (const source of model.sources) if (source.status === 'running') source.status = 'pending';
   let alive = true, busy = false, saving = false, completed = false, ocr, writeTail = Promise.resolve(), previewURL, lastPreviewId;
   const imageURLs = new Set();
@@ -199,7 +200,7 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
           if (!alive) return;
           if (!result.text.trim()) throw new Error('没有识别到文字，可重试或跳过这张截图。');
           source.text = result.text; source.status = 'done'; delete source.error;
-          model.tasks.push(...extractTasks(result.text).map(task => ({ ...task, sourceId: source.id, selected: true })));
+          model.tasks.push(...extractTasks(result.text, new Date(model.referenceTime)).map(task => ({ ...task, sourceId: source.id, selected: true })));
           if (result.confidence < 65) source.warning = '部分文字不清楚，请核对日期和要求。';
         } catch (error) {
           if (!alive) return;
@@ -233,7 +234,7 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
     if (hasImportDraft(model) && !window.confirm('更换截图会替换尚未保存的草稿，已保存的任务不受影响。继续吗？')) return;
     const sources = files.map(file => ({ id: newId(), name: file.name, status: 'pending', text: '' }));
     completed = false;
-    Object.assign(model, { text: '', tasks: [], sources, saved: 0, skipped: 0, overview: files.length > 1, stage: 'review' }); raw.value = '';
+    Object.assign(model, { text: '', tasks: [], sources, saved: 0, skipped: 0, overview: files.length > 1, stage: 'review', referenceTime: new Date().toISOString() }); raw.value = '';
     try {
       await serial(() => replaceImportDraft(snapshot(), files.map((blob, index) => ({ id: sources[index].id, blob }))));
       ui.onDraft(snapshot()); filesList(); runQueue();

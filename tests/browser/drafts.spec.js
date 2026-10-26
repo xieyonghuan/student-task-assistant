@@ -10,17 +10,18 @@ async function stored(page) {
   });
 }
 
-async function screenshots(page) {
-  return page.evaluate(() => ['数学作业：完成第三章习题', '数学作业：完成第三章习题', '英语任务：提交阅读报告'].map((title, index) => {
+async function screenshots(page, relative = false) {
+  return page.evaluate(relative => ['数学作业：完成第三章习题', '数学作业：完成第三章习题', '英语任务：提交阅读报告'].map((title, index) => {
     const canvas = document.createElement('canvas'); canvas.width = 1400; canvas.height = 850;
     const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 1400, 850);
     ctx.fillStyle = '#202020'; ctx.font = '38px "Microsoft YaHei"';
-    ['课程作业通知', '1. ' + title, '截止时间：2026年12月30日 23:59'].forEach((line, i) => ctx.fillText(line, 65, 100 + i * 200));
+    ['课程作业通知', '1. ' + title, relative ? '截止时间：明天 23:59' : '截止时间：2026年12月30日 23:59'].forEach((line, i) => ctx.fillText(line, 65, 100 + i * 200));
     return { name: ['first.png', 'second.png', 'third.png'][index], base64: canvas.toDataURL('image/png').split(',')[1] };
-  }));
+  }), relative);
 }
 
 test('batch OCR resumes after refresh, flags duplicates across images and atomically clears saved drafts and images', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-10-25T20:00:00+08:00'));
   await page.addInitScript(() => {
     const NativeWorker = Worker;
     window.Worker = class extends NativeWorker {
@@ -32,14 +33,16 @@ test('batch OCR resumes after refresh, flags duplicates across images and atomic
     };
   });
   await page.goto('./#/home');
-  const images = await screenshots(page);
+  const images = await screenshots(page, true);
   await page.getByRole('button', { name: /识别课程截图/ }).click();
   await page.locator('#screenshot-file').setInputFiles(images.map(image => ({ name: image.name, mimeType: 'image/png', buffer: Buffer.from(image.base64, 'base64') })));
   await expect.poll(async () => { const s = await stored(page); return s.draft?.sources[0].status === 'done' && s.draft?.sources[1].status === 'running'; }, { timeout: 30000, intervals: [25] }).toBe(true);
   const firstId = (await stored(page)).draft.tasks[0].id;
+  await page.clock.setFixedTime(new Date('2026-10-26T20:00:00+08:00'));
   await page.reload();
   await expect(page.locator('.batch-task')).toHaveCount(3, { timeout: 120000 });
   expect((await stored(page)).draft.tasks[0].id).toBe(firstId);
+  expect((await stored(page)).draft.tasks.every(task => task.dueDate === '2026-10-26')).toBe(true);
   await expect(page.locator('.batch-task').first()).toContainText('可能与 second.png');
   await page.locator('.batch-task').nth(1).locator('[name="selected"]').uncheck();
   await page.locator('.batch-task').nth(2).locator('[name="details"]').fill('保留修改后的阅读要求');
