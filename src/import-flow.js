@@ -107,7 +107,15 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
       return `<article class="batch-task" data-id="${esc(task.id)}"><label class="batch-select"><input type="checkbox" name="selected" ${task.selected === false ? '' : 'checked'}> 保存这项任务 <small>来自 ${esc(sourceName(task))}</small></label>${matches.length ? `<p class="notice warning">可能与 ${esc(matches.map(sourceName).join('、'))} 中的作业重复。请取消不需要的项；日期不同的任务也请核对。</p>` : ''}${hint ? `<p class="notice warning">${esc(hint)}</p>` : ''}${source ? `<details class="source-reference" data-source="${esc(source.id)}"><summary>查看原文与截图</summary><pre>${esc(source.text)}</pre><img alt="导入的课程通知截图" hidden></details>` : ''}<form>${taskFields(task, 'batch-' + task.id + '-')}<label class="field undated-choice"><span><input type="checkbox" name="undated" ${task.dateConfirmed && !task.dueDate ? 'checked' : ''}> 暂无截止日期</span></label></form></article>`;
     }).join('');
     panel.innerHTML = `<div class="review-heading"><span class="feature-label">${icon('check')} 汇总确认</span><strong>待确认 ${model.tasks.length} 项任务 · ${model.sources.length} 张截图</strong></div><p class="review-tip">核对名称、日期和要求；疑似重复的作业可取消勾选，全部核对后统一保存。</p>${failures()}<div class="batch-tasks">${items}</div><p class="form-error" id="batch-error" role="alert"></p><button class="button button-primary" id="save-batch">确认并保存所选任务</button>`;
-    panel.oninput = () => persist();
+    panel.oninput = event => {
+      const card = event.target.closest('.batch-task');
+      if (card && event.target.name === 'undated' && event.target.checked) {
+        const form = $('form', card); form.elements.dueDate.value = ''; form.elements.dueTime.value = '';
+      } else if (card && event.target.name === 'dueDate' && event.target.value) {
+        $('[name="undated"]', card).checked = false;
+      }
+      persist();
+    };
     for (const details of $$('details[data-source]', panel)) details.ontoggle = () => {
       if (!details.open || $('img', details).getAttribute('src')) return;
       loadDraftFile(details.dataset.source).then(file => {

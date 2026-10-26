@@ -50,10 +50,14 @@ test('batch OCR resumes after refresh, flags duplicates across images and atomic
   await page.reload();
   await expect(page.locator('.batch-task').nth(1).locator('[name="selected"]')).not.toBeChecked();
   await expect(page.locator('.batch-task').nth(2).locator('[name="details"]')).toHaveValue('保留修改后的阅读要求');
+  await page.locator('.batch-task').nth(2).locator('[name="undated"]').check();
+  await expect(page.locator('.batch-task').nth(2).locator('[name="dueDate"]')).toHaveValue('');
+  await expect(page.locator('.batch-task').nth(2).locator('[name="dueTime"]')).toHaveValue('');
   await page.getByRole('button', { name: '确认并保存所选任务', exact: true }).click();
   await expect(page.locator('.review-done')).toContainText('已保存 2 项');
   const state = await stored(page);
   expect(state.tasks).toHaveLength(2); expect(state.files).toBe(0); expect(state.draft).toBeUndefined();
+  expect(state.tasks.find(task => task.details === '保留修改后的阅读要求').dueDate).toBe('');
   await page.getByRole('button', { name: '回到我的任务' }).click();
   await page.reload();
   await expect(page.locator('.task-card')).toHaveCount(2);
