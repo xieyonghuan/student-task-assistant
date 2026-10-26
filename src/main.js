@@ -130,6 +130,11 @@ function render() {
     if (contentScroll != null) $('.native-content').scrollTop = contentScroll;
   }
   renderTaskList();
+  if (state.view === 'home' && (state.importDraft || state.manualDraft)) {
+    const resume = $('.home-followup .text-button');
+    resume.removeAttribute('data-view'); resume.dataset.action = 'resume-drafts';
+    resume.innerHTML = icon('undo') + ' 恢复上次内容';
+  }
   $('#task-search')?.addEventListener('input', event => { state.query = event.target.value; renderTaskList(); });
 }
 
@@ -471,12 +476,14 @@ document.addEventListener('click', event => {
     applySidebarState();
   }
   else if (action === 'import') startImport();
-  else if (action === 'resume-import') startImport();
-  else if (action === 'resume-manual') editTask(undefined, true);
+  else if (action === 'resume-drafts') openDialog('恢复未完成内容', '选择要继续的草稿，也可放弃不再需要的内容。', draftBanner());
+  else if (action === 'resume-import') { button.closest('dialog')?.close(); startImport(); }
+  else if (action === 'resume-manual') { button.closest('dialog')?.close(); editTask(undefined, true); }
   else if (action === 'discard-import' || action === 'discard-manual') safely(async () => {
     if (!window.confirm('放弃这个草稿？已经保存的任务不会删除。')) return;
     if (action === 'discard-import') { await pendingImportWrites; await deleteDraft('import'); state.importDraft = null; }
     else { await manualWrites.catch(() => {}); await deleteDraft('manual'); state.manualDraft = null; }
+    button.closest('dialog')?.close();
     render();
   });
   else if (action === 'example') startImport(true);

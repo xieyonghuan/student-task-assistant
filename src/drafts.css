@@ -13,6 +13,8 @@
 .undated-choice > span { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 #save-batch { min-height: 48px; }
 @media (max-width: 650px) {
+  /* Recovery uses the existing home follow-up row, keeping all input methods visible. */
+  .workspace .draft-banner { display: none; }
   .draft-banner { padding: 14px; }
   .batch-task { padding: 14px; }
   .batch-task .date-fields { grid-template-columns: minmax(0, 1fr); }

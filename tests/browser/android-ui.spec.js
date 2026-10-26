@@ -143,3 +143,30 @@ test('folding the Android sidebar preserves an in-progress extraction and works 
   await expect(page.locator('.task-card')).toContainText('已核对的数学任务');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test('phone home keeps all input methods visible with both draft types and can open either recovery', async ({ page }) => {
+  await page.setViewportSize({ width: 421, height: 927 });
+  await android(page);
+  await page.getByRole('button', { name: /识别课程截图/ }).click();
+  await page.locator('#notification-text').fill('尚未提取的通知原文');
+  await page.getByRole('button', { name: '退出添加', exact: true }).click();
+  await page.locator('#home-manual').click();
+  await page.locator('#task-form [name="title"]').fill('尚未保存的填写');
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  for (const [width, height] of [[360, 792], [393, 864], [421, 927]]) {
+    await page.setViewportSize({ width, height });
+    const nav = await page.locator('.sidebar').boundingBox();
+    for (const selector of ['[data-action="import"]', '[data-action="voice"]', '#home-manual']) {
+      const box = await page.locator(selector).boundingBox();
+      expect(box.y + box.height).toBeLessThanOrEqual(nav.y);
+    }
+    await expect(page.getByRole('button', { name: '恢复上次内容', exact: true })).toBeInViewport();
+  }
+  await page.getByRole('button', { name: '恢复上次内容', exact: true }).click();
+  await page.getByRole('button', { name: '恢复填写草稿', exact: true }).click();
+  await expect(page.locator('#task-form [name="title"]')).toHaveValue('尚未保存的填写');
+  await page.getByRole('button', { name: '关闭窗口', exact: true }).click();
+  await page.getByRole('button', { name: '恢复上次内容', exact: true }).click();
+  await page.getByRole('button', { name: '继续上次导入', exact: true }).click();
+  await expect(page.locator('#notification-text')).toHaveValue('尚未提取的通知原文');
+});
