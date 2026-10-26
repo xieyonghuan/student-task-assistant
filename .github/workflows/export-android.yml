@@ -1,0 +1,51 @@
+name: Export reviewed unsigned Android build
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/export-android.yml']
+  workflow_dispatch:
+    inputs:
+      build_commit:
+        description: Commit of the already tested unsigned Android build
+        required: true
+        default: b396f905fafc4b7204ea13868c41bb0ff4969f56
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BUILD_COMMIT: ${{ inputs.build_commit || 'b396f905fafc4b7204ea13868c41bb0ff4969f56' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Download and verify the existing public build
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/android-build-${BUILD_COMMIT}" > release.json
+          gh release download "android-build-${BUILD_COMMIT}" --repo "$GITHUB_REPOSITORY" --dir android-build --pattern app-release-unsigned.apk --pattern apksigner.jar
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import {createHash} from 'node:crypto';
+          const release=JSON.parse(fs.readFileSync('release.json','utf8'));
+          if(release.target_commitish!==process.env.BUILD_COMMIT || release.tag_name!=='android-build-'+process.env.BUILD_COMMIT)throw Error('Build source mismatch');
+          for(const name of ['app-release-unsigned.apk','apksigner.jar']){
+            const asset=release.assets.find(item=>item.name===name);
+            const data=fs.readFileSync('android-build/'+name);
+            const digest='sha256:'+createHash('sha256').update(data).digest('hex');
+            if(!asset||asset.size!==data.length||asset.digest!==digest)throw Error('Build asset digest mismatch: '+name);
+            console.log(name, data.length, digest);
+          }
+          JS
+      - name: Export public unsigned files for local private-key signing
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-for-local-signing-${{ env.BUILD_COMMIT }}
+          path: android-build/*
+          compression-level: 6
+          retention-days: 7
+          if-no-files-found: error
