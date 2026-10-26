@@ -87,11 +87,13 @@ test('extracts multiple tasks, fills relative dates and asks only for missing da
 });
 
 test('device Saturday evening resolves relative deadlines, saves a fixed date and exports midnight', async ({ page }) => {
+  page.on('dialog', dialog => dialog.accept());
   await page.clock.setFixedTime(new Date('2026-10-24T20:30:00+08:00'));
   await home(page);
   const cases = [['明天提交', '2026-10-25'], ['后天提交', '2026-10-26'], ['周五截止', '2026-10-30'], ['星期五提交', '2026-10-30']];
   for (const [expression, date] of cases) {
     await page.getByRole('button', { name: /识别课程截图/ }).click();
+    if (await page.locator('#notification-text').isHidden()) await page.getByRole('button', { name: /返回修改原文/ }).click();
     await page.locator('#notification-text').fill(`完成数学第三章习题\n${expression}`);
     await page.getByRole('button', { name: '从文字提取任务', exact: true }).click();
     await expect(page.locator('#review-panel')).toContainText('第 1 / 1 项任务');
@@ -130,10 +132,12 @@ test.describe('device local timezone', () => {
 });
 
 test('typed Chinese deadline text stays attached to its task and fills the date', async ({ page }) => {
+  page.on('dialog', dialog => dialog.accept());
   await page.clock.setFixedTime(new Date('2026-10-24T12:00:00+08:00'));
   await home(page);
   for (const deadline of ['十月三十号提交', '截止日期十月三十号']) {
     await page.getByRole('button', { name: /识别课程截图/ }).click();
+    if (await page.locator('#notification-text').isHidden()) await page.getByRole('button', { name: /返回修改原文/ }).click();
     await page.locator('#notification-text').fill(`完成数学第三章习题\n${deadline}`);
     await page.getByRole('button', { name: '从文字提取任务', exact: true }).click();
     await expect(page.locator('#review-panel')).toContainText('第 1 / 1 项任务');

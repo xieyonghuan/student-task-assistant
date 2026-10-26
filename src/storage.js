@@ -3,22 +3,32 @@ import { sanitizeTask, validateTask } from './domain.js';
 let pendingDB;
 function database() {
   if (!pendingDB) pendingDB = new Promise((resolve, reject) => {
-    const request = indexedDB.open('shike-study-tasks', 1);
-    request.onupgradeneeded = () => request.result.createObjectStore('tasks', { keyPath: 'id' });
-    request.onsuccess = () => resolve(request.result);
+    const request = indexedDB.open('shike-study-tasks', 2);
+    // v1 tasks are kept intact. v2 adds local, temporary draft metadata and blobs.
+    request.onupgradeneeded = () => {
+      for (const name of ['tasks', 'drafts', 'draft-files']) {
+        if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => {
+      request.result.onversionchange = () => { request.result.close(); pendingDB = null; };
+      resolve(request.result);
+    };
     request.onerror = () => { pendingDB = null; reject(request.error); };
     request.onblocked = () => reject(new Error('请关闭其他拾课页面后重试。'));
   });
   return pendingDB;
 }
 
-async function transaction(mode, action) {
+async function transaction(mode, action, names = ['tasks']) {
   const db = await database();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('tasks', mode);
+    let tx;
+    try { tx = db.transaction(names, mode, mode === 'readwrite' ? { durability: 'strict' } : {}); }
+    catch (error) { if (error instanceof TypeError) tx = db.transaction(names, mode); else throw error; }
     let value;
     try {
-      const req = action(tx.objectStore('tasks'));
+      const req = action(tx.objectStore(names[0]), tx);
       if (req) req.onsuccess = () => { value = req.result; };
     } catch (error) { tx.abort(); reject(error); return; }
     tx.oncomplete = () => resolve(value);
@@ -30,6 +40,26 @@ async function transaction(mode, action) {
 export const loadTasks = () => transaction('readonly', store => store.getAll());
 export const putTask = task => transaction('readwrite', store => store.put(task));
 export const deleteTask = id => transaction('readwrite', store => store.delete(id));
+export const loadDraft = id => transaction('readonly', store => store.get(id), ['drafts']);
+export const loadDraftFile = id => transaction('readonly', store => store.get(id), ['draft-files']);
+export const putDraft = draft => transaction('readwrite', store => store.put(draft), ['drafts']);
+export const deleteDraft = id => transaction('readwrite', (store, tx) => {
+  store.delete(id);
+  if (id === 'import') tx.objectStore('draft-files').clear();
+}, ['drafts', 'draft-files']);
+export const replaceImportDraft = (draft, files) => transaction('readwrite', (store, tx) => {
+  const images = tx.objectStore('draft-files');
+  images.clear();
+  for (const file of files) images.put(file);
+  store.put(draft);
+}, ['drafts', 'draft-files']);
+// Saving the task and consuming its draft commit together, including on shutdown.
+export const putTaskWithDraft = (task, id, nextDraft) => transaction('readwrite', (store, tx) => {
+  store.put(task);
+  const drafts = tx.objectStore('drafts');
+  if (nextDraft) drafts.put(nextDraft); else drafts.delete(id);
+  if (id === 'import' && !nextDraft) tx.objectStore('draft-files').clear();
+}, ['tasks', 'drafts', 'draft-files']);
 
 export function parseBackup(text) {
   const data = JSON.parse(text);

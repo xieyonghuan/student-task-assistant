@@ -2,12 +2,14 @@ import './style.css';
 import './mobile.css';
 import './task-ui.css';
 import './android-ui.css';
+import './drafts.css';
 import { watchMobileViewport } from './viewport.js';
 import { version as APP_VERSION } from '../package.json';
 import { installState, installApp, onInstallChange } from './install.js';
 import { PAGES, readRoute, renderLearningPage } from './pages.js';
 import { newId, extractTasks, findDuplicates, sanitizeTask, validateTask, taskGroup, dueTimestamp, sortTasks, REMINDERS, localDate } from './domain.js';
-import { loadTasks, putTask, deleteTask, parseBackup, restoreTasks } from './storage.js';
+import { loadTasks, putTask, deleteTask, parseBackup, restoreTasks, loadDraft, putDraft, deleteDraft, putTaskWithDraft } from './storage.js';
+import { createImportFlow } from './import-flow.js';
 import { createCalendar } from './calendar.js';
 import { registerOffline, offlineStatus, prepareOffline } from './offline.js';
 import { isNativeApp, nativeCall } from './native.js';
@@ -50,6 +52,7 @@ const state = { tasks: [], view: readRoute(), query: '', offlineReady: false, re
 try { state.sidebarCollapsed = localStorage.getItem('shike-sidebar-collapsed') === 'true'; }
 catch { state.sidebarCollapsed = false; }
 let importSession;
+let openingImport = false, pendingImportWrites = Promise.resolve(), manualWrites = Promise.resolve();
 const isImportView = view => ['capture', 'review'].includes(view);
 let toastTimer;
 const savingIds = new Set();
@@ -86,7 +89,7 @@ function scrollPageToTop() {
   $('.native-content')?.scrollTo({ top: 0, behavior: 'instant' });
 }
 function render() {
-  if (isImportView(state.view) && !importSession) { startImport(); return; }
+  if (isImportView(state.view) && !importSession) { if (!openingImport) startImport(); return; }
   if (state.view === 'review' && !importSession.canReview()) { history.replaceState(null, '', '#' + PAGES.capture.route); state.view = 'capture'; }
   const n = counts();
   const page = PAGES[state.view];
@@ -113,7 +116,7 @@ function render() {
       ${native ? '<div class="native-content">' : ''}<section class="page-heading"><div><p class="eyebrow">${esc(date)}</p><h1>${page.title}</h1><p class="page-subtitle">${page.subtitle}</p></div>${isImportView(state.view) ? `<button class="button button-light" data-action="exit-import">${icon('close')} 退出添加</button>` : state.view === 'home' ? `<button class="button button-light" data-view="all">${icon('calendar')} 查看全部待办</button>` : `<button class="button button-light" data-action="add">${icon('plus')} 手动添加</button>`}</section>
       ${state.storageError ? '<div class="error-banner" role="alert">无法打开本地存储。请退出无痕模式、检查存储空间后重新打开。本次无法保存任务。</div>' : ''}
       ${state.calendarError ? `<div class="error-banner" role="alert">任务已保存在拾课中，日历尚未同步：${esc(state.calendarError)} <button class="text-button" data-action="calendar">检查日历同步</button></div>` : ''}
-      ${renderLearningPage(state, n, icon, esc)}
+      ${state.view === 'home' ? draftBanner() : ''}${renderLearningPage(state, n, icon, esc)}
 
 
       ${native ? `</div>${state.view === 'home' ? `<footer class="native-footer"><div class="native-utility"><span class="privacy-badge">${icon('shield')} 本地私密存储</span><button class="button button-light" data-action="settings" aria-label="打开设置">${icon('settings')}<span>设置与帮助</span></button></div></footer>` : ''}` : `<footer class="workspace-foot"><span>${icon('shield')} 安心学习，数据只属于你</span><span>拾课 · 学习任务助手</span></footer>`}
@@ -215,12 +218,14 @@ onInstallChange(() => {
 function taskFields(task, prefix = '') {
   return `<label class="field">任务名称 <span class="required">*</span><input name="title" maxlength="120" required placeholder="例如：完成高等数学第三章习题" value="${esc(task.title)}"></label><div class="date-fields"><label class="field">截止日期<input name="dueDate" type="date" min="1900-01-01" max="2200-12-31" value="${esc(task.dueDate)}"></label><label class="field">具体时间 <span class="optional">可不填</span><input name="dueTime" type="time" value="${esc(task.dueTime)}"></label></div><p class="field-note">${icon('help')} 只选日期时，按当天 00:00 截止。</p><label class="field">具体要求<textarea name="details" rows="5" maxlength="20000" placeholder="记录作业内容、提交要求等…">${esc(task.details)}</textarea></label><p class="form-error" id="${prefix}form-error" role="alert"></p>`;
 }
-function readTaskFields(form, base) {
+function readTaskFields(form, base, trim = true) {
   const data = new FormData(form);
-  return { ...base, title: String(data.get('title') || '').trim(), dueDate: String(data.get('dueDate') || ''), dueTime: String(data.get('dueTime') || ''), details: String(data.get('details') || '').trim() };
+  const title = String(data.get('title') || ''), details = String(data.get('details') || '');
+  return { ...base, title: trim ? title.trim() : title, dueDate: String(data.get('dueDate') || ''), dueTime: String(data.get('dueTime') || ''), details: trim ? details.trim() : details };
 }
-function confirmDate(task, callback) {
+function confirmDate(task, callback, onChange = () => {}) {
   const dialog = openDialog('确认截止日期', `对应任务：${task.title}`, `<div class="notice">${icon('calendar')}<p>${esc(task.dateHint || '请确认此任务的截止日期，或选择暂无截止日期。')}</p></div><label class="field">截止日期<input id="confirm-date" type="date" min="1900-01-01" max="2200-12-31" value="${esc(task.dueDate)}"></label><label class="field">具体时间 <span class="optional">可不填</span><input id="confirm-time" type="time" value="${esc(task.dueTime)}"></label><p class="field-note">只选择日期时，按当天 00:00 截止。</p><p class="form-error" role="alert"></p><div class="modal-actions"><button class="button button-light" id="no-date">暂无截止日期</button><button class="button button-primary" id="choose-date">确认日期</button></div>`);
+  dialog.oninput = () => onChange({ ...task, dueDate: $('#confirm-date', dialog).value, dueTime: $('#confirm-time', dialog).value, dateConfirmed: false });
   $('#no-date', dialog).onclick = () => { dialog.close(); callback({ ...task, dueDate: '', dueTime: '', dateConfirmed: true }); };
   $('#choose-date', dialog).onclick = () => {
     const selected = { ...task, dueDate: $('#confirm-date', dialog).value, dueTime: $('#confirm-time', dialog).value };
@@ -230,172 +235,122 @@ function confirmDate(task, callback) {
   };
 }
 function duplicateDialog(task, matches, onDecision) {
+  let decided = false;
   const dialog = openDialog('可能与已有任务重复', '请选择如何处理这项任务。', `<div class="notice warning">${icon('alert')}<p>准备保存：<strong>${esc(task.title)}</strong></p></div><label class="field">相似的已有任务<select id="duplicate-target">${matches.map(t => `<option value="${esc(t.id)}">${esc(t.title)}${t.completedAt ? '（已完成）' : ''}</option>`).join('')}</select></label><p class="field-note">修改原任务会更新名称、日期和具体要求，并保留原任务的完成状态。</p><div class="stacked-actions"><button class="button button-primary" id="replace-original">修改选中的原任务</button><button class="button button-light" id="save-separate">仍然新增任务</button><button class="text-button" id="skip-duplicate">跳过本项</button></div>`);
-  $('#replace-original', dialog).onclick = () => { const id = $('#duplicate-target', dialog).value; dialog.close(); onDecision('replace', id); };
-  $('#save-separate', dialog).onclick = () => { dialog.close(); onDecision('new'); };
-  $('#skip-duplicate', dialog).onclick = () => { dialog.close(); onDecision('skip'); };
+  dialog.addEventListener('close', () => { if (!decided) onDecision('cancel'); });
+  $('#replace-original', dialog).onclick = () => { const id = $('#duplicate-target', dialog).value; decided = true; dialog.close(); onDecision('replace', id); };
+  $('#save-separate', dialog).onclick = () => { decided = true; dialog.close(); onDecision('new'); };
+  $('#skip-duplicate', dialog).onclick = () => { decided = true; dialog.close(); onDecision('skip'); };
 }
-function saveWithChecks(task, { excludeId, afterSave, onSkip = () => {} } = {}) {
+function saveWithChecks(task, { excludeId, afterSave, onSkip = () => {}, onCancel = () => {}, onError = () => {}, onDateChange = () => {}, persistTask = putTask } = {}) {
   if (savingIds.has(task.id)) return;
-  if (state.storageError) { toast('本地存储不可用，暂时无法保存。', true); return; }
+  if (state.storageError) { toast('本地存储不可用，暂时无法保存。', true); onError(); return; }
   const error = validateTask(task);
-  if (error) { toast(error, true); return; }
-  if (!task.dateConfirmed) { confirmDate(task, result => saveWithChecks(result, { excludeId, afterSave, onSkip })); return; }
+  if (error) { toast(error, true); onError(); return; }
+  if (!task.dateConfirmed) { confirmDate(task, result => saveWithChecks(result, { excludeId, afterSave, onSkip, onCancel, onError, onDateChange, persistTask }), onDateChange); return; }
   const save = (candidate) => safely(async () => {
     if (savingIds.has(task.id)) return;
     savingIds.add(task.id);
-    try { await putTask(sanitizeTask(candidate)); await reloadTasks(); afterSave?.(); toast('任务已保存在这台设备上'); }
+    try { await persistTask(sanitizeTask(candidate)); await reloadTasks(); afterSave?.(); toast('任务已保存在这台设备上'); }
+    catch (error) { onError(error); throw error; }
     finally { savingIds.delete(task.id); }
   });
   const duplicates = findDuplicates(task, state.tasks, excludeId);
   if (duplicates.length) {
     duplicateDialog(task, duplicates, (choice, id) => {
+      if (choice === 'cancel') { onCancel(); return; }
       if (choice === 'skip') { onSkip(); return; }
       if (choice === 'replace') { const original = state.tasks.find(t => t.id === id); save({ ...task, id, createdAt: original.createdAt, completedAt: original.completedAt }); }
       else save(task);
     });
   } else save(task);
 }
-function editTask(id) {
-  const original = state.tasks.find(t => t.id === id);
-  const task = original ? { ...original, dateConfirmed: true } : { id: newId(), title: '', details: '', dueDate: '', dueTime: '', dateConfirmed: false };
-  const dialog = openDialog(original ? '编辑学习任务' : '记下一件学习小事', '只有任务名称必填，日期和要求都可以稍后补充。', `<form id="task-form">${taskFields(task)}<div class="modal-actions"><button class="button button-light" type="button" id="cancel-edit">取消</button><button class="button button-primary" type="submit">${original ? '保存修改' : '保存任务'}</button></div></form>`);
-  $('#cancel-edit', dialog).onclick = () => dialog.close();
-  $('#task-form', dialog).onsubmit = event => {
+function draftBanner() {
+  const imported = state.importDraft, manual = state.manualDraft;
+  if (!imported && !manual) return '';
+  return '<section class="draft-banner glass" aria-label="未完成草稿"><strong>还有未完成的内容，可继续上次填写</strong><div>' +
+    (imported ? '<button class="button button-light" data-action="resume-import">继续上次导入</button><button class="text-button" data-action="discard-import">放弃导入草稿</button>' : '') +
+    (manual ? '<button class="button button-light" data-action="resume-manual">恢复填写草稿</button><button class="text-button" data-action="discard-manual">放弃填写草稿</button>' : '') + '</div></section>';
+}
+function manualAction(action) {
+  const next = manualWrites.catch(() => {}).then(action);
+  manualWrites = next;
+  return next;
+}
+async function editTask(id, restoring = false) {
+  await manualWrites.catch(() => {});
+  const draft = state.manualDraft;
+  if (!restoring && draft && (draft.originalId || undefined) !== id) {
+    const dialog = openDialog('还有未完成的填写', '可先继续上次内容，或放弃它后开始新的填写。', '<button class="button button-primary" id="resume-before-edit">继续上次填写</button><button class="text-button" id="discard-before-edit">放弃草稿并继续</button>');
+    $('#resume-before-edit', dialog).onclick = () => { dialog.close(); editTask(undefined, true); };
+    $('#discard-before-edit', dialog).onclick = () => safely(async () => { await manualAction(() => deleteDraft('manual')); state.manualDraft = null; dialog.close(); editTask(id); });
+    return;
+  }
+  const restored = draft && (restoring || (draft.originalId || undefined) === id) ? draft : null;
+  const originalId = restored ? restored.originalId : id;
+  const original = originalId ? state.tasks.find(task => task.id === originalId) : null;
+  const fields = restored?.task;
+  const task = original ? { ...original, ...(fields ? { title: fields.title, details: fields.details, dueDate: fields.dueDate, dueTime: fields.dueTime } : {}), dateConfirmed: true }
+    : fields ? { ...fields, id: originalId ? newId() : fields.id }
+    : { id: newId(), title: '', details: '', dueDate: '', dueTime: '', dateConfirmed: false };
+  let settled = false;
+  const dialog = openDialog(original ? '编辑学习任务' : '记下一件学习小事', '输入自动暂存在本机；关闭后可恢复，保存后自动清理。', '<form id="task-form">' + taskFields(task) + '<p id="manual-draft-state" class="source-note" role="status">填写内容会自动保存为草稿。</p><div class="modal-actions"><button class="button button-light" type="button" id="cancel-edit">取消</button><button class="text-button" type="button" id="discard-edit">放弃草稿</button><button class="button button-primary" type="submit">' + (original ? '保存修改' : '保存任务') + '</button></div></form>');
+  const form = $('#task-form', dialog);
+  function preserve() {
+    if (settled) return;
+    const record = { id: 'manual', originalId: original?.id || null, task: readTaskFields(form, task, false), updatedAt: new Date().toISOString() };
+    if (!original && !['title', 'details', 'dueDate', 'dueTime'].some(name => record.task[name].trim())) {
+      state.manualDraft = null;
+      manualAction(() => deleteDraft('manual')).catch(error => { $('#manual-draft-state', dialog).textContent = error.message; });
+      return;
+    }
+    state.manualDraft = record;
+    $('#manual-draft-state', dialog).textContent = '正在保存草稿…';
+    manualAction(() => putDraft(record)).then(() => { $('#manual-draft-state', dialog).textContent = '草稿已自动保存在本机。'; }, error => { $('#manual-draft-state', dialog).textContent = '草稿保存失败：' + error.message; });
+  }
+  form.oninput = preserve;
+  form.onchange = preserve;
+  $('#cancel-edit', dialog).onclick = () => { dialog.close(); render(); };
+  $('#discard-edit', dialog).onclick = () => safely(async () => { settled = true; await manualAction(() => deleteDraft('manual')); state.manualDraft = null; dialog.close(); render(); });
+  form.onsubmit = event => {
     event.preventDefault();
-    const candidate = readTaskFields(event.currentTarget, task);
+    const candidate = readTaskFields(form, task);
     if (candidate.dueDate) candidate.dateConfirmed = true;
     const error = validateTask(candidate);
     if (error) { $('#form-error', dialog).textContent = error; return; }
-    saveWithChecks(candidate, { excludeId: original?.id, afterSave: () => dialog.close() });
+    saveWithChecks(candidate, { excludeId: original?.id, persistTask: saved => manualAction(async () => {
+      await putTaskWithDraft(saved, 'manual', null); settled = true; state.manualDraft = null;
+    }), onDateChange: changed => { for (const name of ['dueDate', 'dueTime']) form.elements[name].value = changed[name]; preserve(); }, afterSave: () => dialog.close() });
   };
 }
 
 const EXAMPLE = '课程任务通知\n1. 高等数学：完成第三章课后习题\n截止时间：10月30日。请写出计算过程。\n2. 大学英语：提交阅读报告\n请于周五提交，要求不少于300字。\n3. 计算机基础：整理课堂笔记\n要求：总结本章知识点，暂无截止日期。';
-function startImport(example = false, initialText = '', mode = 'image') {
-  let previewURL, ocrBusy = false, drafts = [], index = 0, saved = 0, skipped = 0, recognize, extractedText = '';
-  importSession?.dispose();
+async function startImport(example = false, initialText = '', mode = 'image') {
+  if (openingImport) return;
+  openingImport = true;
   const returnView = isImportView(state.view) ? 'home' : state.view;
-  const importPage = document.createElement('section');
-  importPage.className = 'import-page glass';
-  importPage.setAttribute('aria-label', '通知导入与任务确认');
-  importPage.innerHTML = `<div class="import-steps"><span class="active"><b>1</b> 导入通知</span><i></i><span><b>2</b> 识别与提取</span><i></i><span><b>3</b> 逐项确认</span></div><div class="import-layout"><section class="source-panel"><h3>课程通知 <span>仅在本地处理</span></h3><input id="screenshot-file" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" hidden><div id="image-drop" class="image-drop" tabindex="0" role="button" aria-label="选择一张课程通知截图"><div id="image-preview"><span class="upload-symbol">${icon('upload')}</span><strong>选择一张课程通知截图</strong><p>点击选择，或将图片拖到这里</p><small>PNG / JPG / WebP · 最大 20 MB</small></div></div><p class="source-note">尽量裁剪至通知正文，文字清晰时识别更准确。</p><label class="field">通知文字 <span class="optional">也可以直接粘贴</span><textarea id="notification-text" rows="7" maxlength="30000" placeholder="识别后的文字会显示在这里。你也可以粘贴通知，再提取任务。">${example ? esc(EXAMPLE) : ''}</textarea></label><button id="extract-tasks" class="button button-light full-width">${icon('spark')} 从文字提取任务</button><p class="source-note">原截图仅用于本次核对，不随任务保存。</p></section><section id="review-panel" class="review-panel"><div class="review-placeholder"><span class="review-placeholder-icon">${icon('scan')}</span><h3>让每一件事，都有着落</h3><p>识别结果会出现在这里。<br>任务名称、截止日期和具体要求，都由你确认。</p><span class="small-chip">${icon('shield')} 没有上传，只有本地识别</span></div></section></div>`;
-  const panel = $('#review-panel', importPage);
-  const raw = $('#notification-text', importPage);
-  const source = $('.source-panel', importPage);
-  const steps = $$('.import-steps span', importPage);
-  const navigation = document.createElement('div');
-  navigation.className = 'import-page-nav';
-  navigation.innerHTML = '<button class="text-button" id="back-to-source">← 返回修改原文</button><button class="button button-light" id="continue-review">继续确认任务 →</button>';
-  importPage.prepend(navigation);
-  function goTo(view, replace = false) {
-    if (location.hash !== '#' + PAGES[view].route) history[replace ? 'replaceState' : 'pushState'](null, '', '#' + PAGES[view].route);
-    state.view = view; state.query = ''; render();
-    scrollPageToTop();
-    const heading = $('.review-heading, .review-done h3, #ocr-message', panel);
-    if (view === 'review' && heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
-  }
-  function rememberDraft() {
-    const form = $('#review-form', panel);
-    if (form && drafts[index]) drafts[index] = readTaskFields(form, drafts[index]);
-  }
-  importSession = {
-    element: importPage, returnView,
-    canReview: () => drafts.length > 0 || ocrBusy || !!$('.import-error', panel),
-    setStage(view) {
-      const reviewing = view === 'review';
-      if (!reviewing) rememberDraft();
-      source.hidden = reviewing; panel.hidden = !reviewing;
-      $('#back-to-source', importPage).hidden = !reviewing;
-      $('#back-to-source', importPage).disabled = ocrBusy;
-      $('#continue-review', importPage).hidden = reviewing || !drafts.length;
-      steps.forEach((el, i) => { const active = i === (reviewing ? (ocrBusy ? 1 : 2) : 0); el.classList.toggle('active', active); if (active) el.setAttribute('aria-current', 'step'); else el.removeAttribute('aria-current'); });
-    },
-    dispose() { recognize?.cancelOCR(); if (previewURL) URL.revokeObjectURL(previewURL); importPage.remove(); },
-  };
-  $('#back-to-source', importPage).onclick = () => { rememberDraft(); goTo('capture'); };
-  $('#continue-review', importPage).onclick = () => showDraft();
-  goTo('capture', isImportView(state.view));
-  function showDraft() {
-    if (!importPage.isConnected) return;
-    $$('.import-steps span', importPage).forEach((el, i) => el.classList.toggle('active', i === 2));
-    if (index >= drafts.length) {
-      panel.innerHTML = `<div class="review-placeholder review-done"><span class="success-symbol">${icon('check')}</span><h3>这份通知，整理好了</h3><p>已保存 ${saved} 项，已跳过 ${skipped} 项。<br>新的学习安排已经在任务列表里。</p><button class="button button-primary" id="finish-import">回到我的任务 ${icon('arrow')}</button></div>`;
-      $('#finish-import', panel).onclick = () => { location.hash = PAGES.all.route; }; goTo('review'); return;
+  try {
+    if (importSession) { pendingImportWrites = importSession.dispose(); importSession = undefined; }
+    await pendingImportWrites;
+    if ((example || initialText) && state.importDraft) {
+      if (!window.confirm('这会替换未保存的导入草稿，已保存的任务不受影响。继续吗？')) { example = false; initialText = ''; }
+      else { await deleteDraft('import'); state.importDraft = null; }
     }
-    const task = drafts[index];
-    panel.innerHTML = `<div class="review-heading"><span class="feature-label">${icon('check')} 逐项确认</span><strong>第 ${index + 1} / ${drafts.length} 项任务</strong></div><div class="review-progress"><i style="width:${index / drafts.length * 100}%"></i></div><p class="review-tip">请核对这项任务；可展开原文对照，或返回上一步修改后重新提取。</p>${task.dateHint ? `<div class="notice compact">${icon('calendar')}<p>${esc(task.dateHint)}</p></div>` : ''}<details class="source-reference"><summary>查看通知原文${previewURL ? '与截图' : ''}</summary><pre>${esc(extractedText)}</pre>${previewURL ? `<img src="${esc(previewURL)}" alt="导入的课程通知截图">` : ''}</details><form id="review-form">${taskFields(task, 'review-')}<div class="review-actions"><button class="text-button" type="button" id="skip-task">跳过这一项</button><button class="button button-primary" type="submit">确认并保存 ${icon('arrow')}</button></div></form>`;
-    const advance = isSaved => { if (isSaved) saved++; else skipped++; index++; showDraft(); };
-    $('#skip-task', panel).onclick = () => advance(false);
-    $('#review-form', panel).onsubmit = event => {
-      event.preventDefault();
-      const candidate = readTaskFields(event.currentTarget, task);
-      // Only dates that remain unresolved require a separate, named confirmation.
-      const error = validateTask(candidate);
-      if (error) { $('#review-form-error', panel).textContent = error; return; }
-      saveWithChecks(candidate, { afterSave: () => advance(true), onSkip: () => advance(false) });
-    };
-    goTo('review');
-    if (!task.dateConfirmed) confirmDate(task, confirmed => { drafts[index] = confirmed; showDraft(); });
-  }
-  function extract() {
-    if (ocrBusy) return;
-    if (index < drafts.length && !window.confirm('重新提取会替换尚未确认的结果，已保存的任务不受影响。继续吗？')) return;
-    extractedText = raw.value;
-    drafts = extractTasks(extractedText); index = 0; saved = 0; skipped = 0;
-    if (!drafts.length) { toast('请先上传截图或粘贴通知文字。', true); return; }
-    showDraft();
-  }
-  $('#extract-tasks', importPage).onclick = extract;
-  async function handleFile(file) {
-    if (!file || ocrBusy) return;
-    if (!/^image\/(png|jpeg|webp|bmp)$/.test(file.type) || file.size > 20 * 1024 * 1024) { toast('请选择不超过 20 MB 的 PNG、JPG、WebP 或 BMP 图片。', true); return; }
-    if (drafts.length && index < drafts.length && !window.confirm('更换截图会放弃尚未确认的结果。继续吗？')) return;
-    if (previewURL) URL.revokeObjectURL(previewURL);
-    previewURL = URL.createObjectURL(file);
-    $('#image-preview', importPage).innerHTML = `<img src="${esc(previewURL)}" alt="本次导入的课程通知截图"><span class="change-image">点击更换截图</span>`;
-    ocrBusy = true; drafts = []; index = 0; raw.value = '';
-    $('#extract-tasks', importPage).disabled = true;
-    $$('.import-steps span', importPage).forEach((el, i) => el.classList.toggle('active', i === 1));
-    panel.innerHTML = `<div class="review-placeholder"><div class="scan-loader">${icon('scan')}</div><h3 id="ocr-message">正在准备本地识别</h3><div class="ocr-progress"><i id="ocr-bar"></i></div><p>截图保留在你的设备上。<br>长截图识别可能需要一些时间。</p><button class="text-button" id="cancel-ocr">取消识别</button></div>`;
-    $('#cancel-ocr', panel).onclick = () => { location.hash = PAGES[returnView].route; };
-    goTo('review');
-    try {
-      recognize = await import('./ocr.js');
-      if (!importPage.isConnected) return;
-      const result = await recognize.recognizeImage(file, (message, progress) => {
-        if (!importPage.isConnected) return;
-        $('#ocr-message', panel).textContent = message;
-        $('#ocr-bar', panel).style.width = `${Math.max(3, Math.round(progress * 100))}%`;
-      });
-      if (!importPage.isConnected) return;
-      raw.value = result.text;
-      if (!result.text.trim()) throw new Error('没有识别到文字，请裁剪清晰的通知正文重试，或粘贴文字。');
-      ocrBusy = false;
-      extract();
-      if (result.confidence < 65) toast('图片中的部分文字不够清楚，请特别核对任务和日期。', true);
-    } catch (error) {
-      if (!importPage.isConnected) return;
-      panel.innerHTML = `<div class="review-placeholder import-error"><span class="review-placeholder-icon">${icon('help')}</span><h3>这次没有识别完成</h3><p>${esc(error.message || '请重新选择图片，或直接粘贴通知文字。')}</p><p>点击上方“返回修改原文”，粘贴通知文字后继续提取。</p></div>`;
-    } finally { ocrBusy = false; if (importPage.isConnected) { $('#extract-tasks', importPage).disabled = false; importSession?.setStage(state.view); } }
-  }
-  $('#screenshot-file', importPage).onchange = event => handleFile(event.target.files[0]);
-  const drop = $('#image-drop', importPage);
-  drop.onclick = () => { if (!ocrBusy) $('#screenshot-file', importPage).click(); };
-  drop.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); drop.click(); } };
-  drop.ondragover = event => { event.preventDefault(); drop.classList.add('drag-over'); };
-  drop.ondragleave = () => drop.classList.remove('drag-over');
-  drop.ondrop = event => { event.preventDefault(); drop.classList.remove('drag-over'); handleFile(event.dataTransfer.files[0]); };
-  if (mode === 'voice') {
-    $('#image-drop', importPage).style.display = 'none';
-    $('.source-panel > h3', importPage).firstChild.textContent = '语音转写 ';
-    const sourceNotes = $$('.source-note', importPage);
-    sourceNotes[0].textContent = '以下文字来自本机中文语音识别，请核对错字和日期。';
-    sourceNotes[1].textContent = '录音不保存，只将你确认的任务写入本地存储。';
-    $('.import-steps span', importPage).innerHTML = '<b>1</b> 语音转写';
-  }
-  if (initialText) { raw.value = initialText; extract(); }
-  if (example && !initialText) raw.focus();
+    importSession = createImportFlow({ restored: state.importDraft, example: example ? EXAMPLE : '', initialText, mode, returnView, ui: {
+      $, $$, esc, icon, taskFields, readTaskFields, saveWithChecks, confirmDate, toast, safely,
+      onDraft: draft => { state.importDraft = draft; },
+      goTo: (view, replace = false) => {
+        if (location.hash !== '#' + PAGES[view].route) history[replace ? 'replaceState' : 'pushState'](null, '', '#' + PAGES[view].route);
+        state.view = view; state.query = ''; render(); scrollPageToTop();
+        const heading = $('.review-heading, .review-done h3, #ocr-message');
+        if (view === 'review' && heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+      },
+      exit: view => { location.hash = PAGES[view].route; },
+      finish: () => { location.hash = PAGES.all.route; },
+    } });
+    importSession.open();
+  } catch (error) { toast(error.message, true); }
+  finally { openingImport = false; }
 }
 
 function download(content, type, filename) {
@@ -465,7 +420,7 @@ async function calendarSettings() {
 
 let preparingOffline = false;
 async function settings() {
-  const dialog = openDialog('你的本地学习空间', '不需要账号，任务保存在当前设备的这个浏览器中。', `<section class="settings-block"><span class="settings-heading">${icon('shield')} 数据与隐私</span><p>图片识别与任务提取在本机完成，不上传截图或文字，不使用云端 AI。原截图仅用于本次核对，不随任务保存；语音在本机识别，录音不保存。</p><p>清除浏览器数据、卸载浏览器或更换网址，可能导致本地任务不可用。请定期导出备份。</p></section><section class="settings-block"><span class="settings-heading">${icon('download')} 离线识别资源</span><p id="offline-description">${state.offlineReady ? '资源已准备好，可以离线识别和管理任务。' : `首次使用请联网准备资源${state.resourceBytes ? `（约 ${Math.ceil(state.resourceBytes / 1024 / 1024)} MB）` : ''}。准备完成后可以断网使用。`}</p><button class="button button-light" id="prepare-offline" ${preparingOffline ? 'disabled' : ''}>${icon('download')} ${state.offlineReady ? '检查并补全离线资源' : '准备离线使用'}</button><div id="offline-progress" class="ocr-progress" hidden><i></i></div><p class="form-error" id="offline-error" role="alert"></p></section><section class="settings-block"><span class="settings-heading">${icon('inbox')} 任务备份</span><p>备份包含任务文字、日期和完成状态。请自行保管文件。</p><div class="inline-actions"><button class="button button-light" id="backup-export">${icon('download')} 导出备份</button><button class="button button-light" id="backup-import">${icon('upload')} 恢复备份</button><input id="backup-file" type="file" accept=".json,application/json" hidden></div></section><section class="settings-block"><span class="settings-heading">${icon('help')} 安装到平板桌面</span><p>使用平板浏览器打开 HTTPS 安全网址，在浏览器菜单中选择“安装应用”或“添加到桌面”（入口随浏览器而异）。首次准备好离线资源后再断网使用。</p><p>电脑上的 localhost 地址只供电脑本机预览。平板需要可访问的 HTTPS 地址，才能完整使用离线安装。</p><p class="version-note">拾课 v${APP_VERSION} · 第一版逐项确认；批量自动处理将在后续加入。</p></section>`);
+  const dialog = openDialog('你的本地学习空间', '不需要账号，任务保存在当前设备的这个浏览器中。', `<section class="settings-block"><span class="settings-heading">${icon('shield')} 数据与隐私</span><p>图片识别与任务提取在本机完成，不上传截图或文字，不使用云端 AI。未完成导入的截图与文字仅暂存在本机草稿，整批保存完成或放弃草稿后清理，不随任务保存；语音在本机识别，录音不保存。</p><p>清除浏览器数据、卸载浏览器或更换网址，可能导致本地任务不可用。请定期导出备份。</p></section><section class="settings-block"><span class="settings-heading">${icon('download')} 离线识别资源</span><p id="offline-description">${state.offlineReady ? '资源已准备好，可以离线识别和管理任务。' : `首次使用请联网准备资源${state.resourceBytes ? `（约 ${Math.ceil(state.resourceBytes / 1024 / 1024)} MB）` : ''}。准备完成后可以断网使用。`}</p><button class="button button-light" id="prepare-offline" ${preparingOffline ? 'disabled' : ''}>${icon('download')} ${state.offlineReady ? '检查并补全离线资源' : '准备离线使用'}</button><div id="offline-progress" class="ocr-progress" hidden><i></i></div><p class="form-error" id="offline-error" role="alert"></p></section><section class="settings-block"><span class="settings-heading">${icon('inbox')} 任务备份</span><p>备份包含已保存任务的文字、日期和完成状态，不包含未保存的草稿或截图。请自行保管文件。</p><div class="inline-actions"><button class="button button-light" id="backup-export">${icon('download')} 导出备份</button><button class="button button-light" id="backup-import">${icon('upload')} 恢复备份</button><input id="backup-file" type="file" accept=".json,application/json" hidden></div></section><section class="settings-block"><span class="settings-heading">${icon('help')} 安装到平板桌面</span><p>使用平板浏览器打开 HTTPS 安全网址，在浏览器菜单中选择“安装应用”或“添加到桌面”（入口随浏览器而异）。首次准备好离线资源后再断网使用。</p><p>电脑上的 localhost 地址只供电脑本机预览。平板需要可访问的 HTTPS 地址，才能完整使用离线安装。</p><p class="version-note">拾课 v${APP_VERSION} · 支持多图汇总确认与本机草稿恢复。</p></section>`);
   if (isNativeApp()) {
     const section = document.createElement('section'); section.className = 'settings-block';
     section.innerHTML = `<span class="settings-heading">${icon('calendar')} 系统日历</span><p>首次授权后，新增、修改、完成和删除任务会自动同步到本机日历。</p><button class="button button-light" id="open-calendar-sync">管理自动同步</button>`;
@@ -516,6 +471,14 @@ document.addEventListener('click', event => {
     applySidebarState();
   }
   else if (action === 'import') startImport();
+  else if (action === 'resume-import') startImport();
+  else if (action === 'resume-manual') editTask(undefined, true);
+  else if (action === 'discard-import' || action === 'discard-manual') safely(async () => {
+    if (!window.confirm('放弃这个草稿？已经保存的任务不会删除。')) return;
+    if (action === 'discard-import') { await pendingImportWrites; await deleteDraft('import'); state.importDraft = null; }
+    else { await manualWrites.catch(() => {}); await deleteDraft('manual'); state.manualDraft = null; }
+    render();
+  });
   else if (action === 'example') startImport(true);
   else if (action === 'exit-import') location.hash = PAGES[importSession.returnView].route;
   else if (action === 'voice') safely(async () => {
@@ -548,14 +511,14 @@ document.addEventListener('click', event => {
 
 window.addEventListener('hashchange', () => {
   state.view = readRoute(); state.query = '';
-  if (!isImportView(state.view) && importSession) { importSession.dispose(); importSession = undefined; }
+  if (!isImportView(state.view) && importSession) { pendingImportWrites = importSession.dispose(); importSession = undefined; }
   render(); scrollPageToTop();
 });
 
 async function start() {
   watchMobileViewport();
   if (!Object.values(PAGES).some(p => `#${p.route}` === location.hash)) history.replaceState(null, '', '#/home');
-  try { state.tasks = await loadTasks(); }
+  try { [state.tasks, state.importDraft, state.manualDraft] = await Promise.all([loadTasks(), loadDraft('import'), loadDraft('manual')]); }
   catch { state.storageError = true; }
   render();
   if (!state.storageError) await syncSavedTasks();

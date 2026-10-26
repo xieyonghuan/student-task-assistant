@@ -29,7 +29,7 @@ test('Ace 3 sized portrait, landscape and enlarged display keep pages, forms and
     }
     if(width===421){await mkdir('../outputs',{recursive:true});await page.screenshot({path:'../outputs/shike-v1.2-ace3-timeline.png',fullPage:true});}
     // Each iteration deliberately restores a clean temporary browser database.
-    await page.evaluate(()=>new Promise((resolve,reject)=>{const r=indexedDB.open('shike-study-tasks',1);r.onsuccess=()=>{const tx=r.result.transaction('tasks','readwrite');tx.objectStore('tasks').clear();tx.oncomplete=()=>{r.result.close();resolve()};tx.onerror=()=>reject(tx.error)}}));
+    await page.evaluate(()=>new Promise((resolve,reject)=>{const r=indexedDB.open('shike-study-tasks');r.onsuccess=()=>{const tx=r.result.transaction('tasks','readwrite');tx.objectStore('tasks').clear();tx.oncomplete=()=>{r.result.close();resolve()};tx.onerror=()=>reject(tx.error)}}));
   }
 });
 

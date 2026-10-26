@@ -1,0 +1,20 @@
+.draft-banner { padding: 16px 20px; margin-bottom: 20px; border-radius: 16px; color: #60769b; }
+.draft-banner > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.draft-banner .button, .draft-banner .text-button { min-height: 44px; }
+.source-files { padding: 0; list-style: none; margin: 16px 0; color: #60769b; font-size: 13px; }
+.source-files li { overflow-wrap: anywhere; padding: 6px 0; }
+.source-files li > span { margin-left: 10px; color: #8194ae; }
+.batch-tasks { display: grid; gap: 18px; margin-bottom: 20px; }
+.batch-task { min-width: 0; border: 1px solid #dfe6f3; border-radius: 16px; padding: 20px; }
+.batch-select { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; color: #526b96; font-weight: 600; min-height: 44px; }
+.batch-select small { width: 100%; font-size: 12px; color: #8296b4; font-weight: 400; overflow-wrap: anywhere; }
+.batch-task input[type="checkbox"] { width: 20px; height: 20px; min-height: 20px; accent-color: #5876dc; }
+.batch-task .notice { display: block; font-size: 13px; overflow-wrap: anywhere; }
+.undated-choice > span { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+#save-batch { min-height: 48px; }
+@media (max-width: 650px) {
+  .draft-banner { padding: 14px; }
+  .batch-task { padding: 14px; }
+  .batch-task .date-fields { grid-template-columns: minmax(0, 1fr); }
+  #save-batch { width: 100%; }
+}

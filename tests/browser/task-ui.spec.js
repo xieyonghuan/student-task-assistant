@@ -63,6 +63,7 @@ test('phone extraction moves from a scrolled input to the next page; direct revi
   await mkdir('../outputs', { recursive: true });
   await page.screenshot({ path: '../outputs/shike-review-phone.png', fullPage: true });
   await page.reload();
-  await expect(page).toHaveURL(/#\/import$/);
-  await expect(page.locator('#notification-text')).toHaveValue('');
+  await expect(page).toHaveURL(/#\/import\/review$/);
+  await expect(page.locator('#review-form [name="title"]')).toHaveValue('完成英语阅读报告');
+  await expect(page.locator('#review-form [name="dueDate"]')).toHaveValue('2026-12-30');
 });

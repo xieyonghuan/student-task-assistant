@@ -154,6 +154,7 @@ public final class MainActivity extends Activity {
                 chooser = callback;
                 Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
                 String accept = String.join(",", params.getAcceptTypes());
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE);
                 if (accept.contains("image/")) intent.setType("image/*");
                 else if (accept.contains("json")) intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "text/plain", "application/octet-stream"});
                 try { startActivityForResult(intent, 201); }
@@ -204,13 +205,26 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int code, int result, Intent data) {
         super.onActivityResult(code, result, data);
-        if (code == 201 && chooser != null) { chooser.onReceiveValue(result == RESULT_OK && data != null && data.getData() != null ? new Uri[]{data.getData()} : null); chooser = null; }
+        if (code == 201 && chooser != null) { chooser.onReceiveValue(result == RESULT_OK ? selectedFiles(data) : null); chooser = null; }
         if (code == 202 && saveReply != null) {
             Reply reply = saveReply; String content = saveContent; saveReply = null; saveContent = null;
             if (result != RESULT_OK || data == null || data.getData() == null) { reply.send(null, new IllegalStateException("已取消保存文件。")); return; }
             Uri uri = data.getData();
             background(reply, () -> { try (OutputStream stream = getContentResolver().openOutputStream(uri, "wt")) { if (stream == null) throw new IllegalStateException("无法写入选中的文件。"); stream.write(content.getBytes(StandardCharsets.UTF_8)); } return new JSONObject().put("saved", true); });
         }
+    }
+    static Uri[] selectedFiles(Intent data) {
+        if (data == null) return null;
+        java.util.LinkedHashSet<Uri> files = new java.util.LinkedHashSet<>();
+        if (data.getClipData() != null) {
+            for (int index = 0; index < data.getClipData().getItemCount(); index++) {
+                Uri uri = data.getClipData().getItemAt(index).getUri();
+                if (uri != null && "content".equals(uri.getScheme())) files.add(uri);
+            }
+        }
+        Uri uri = data.getData();
+        if (uri != null && "content".equals(uri.getScheme())) files.add(uri);
+        return files.isEmpty() ? null : files.toArray(new Uri[0]);
     }
     @Override protected void onSaveInstanceState(Bundle state) { super.onSaveInstanceState(state); if (web != null) web.saveState(state); }
     WebView browserForTests() { return web; }
