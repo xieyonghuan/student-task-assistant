@@ -8,7 +8,7 @@ async function app(page) {
       let result = { available: true, enabled: false, granted: false }, error;
       if (m.method === 'shareInbox') result = window.__inbox;
       if (m.method === 'shareConsume') { if (window.__failAck) error = 'ack interrupted'; else window.__inbox = window.__inbox.filter(item => item.id !== m.args.id); }
-      if (m.method === 'recognizeImage') result = { text: '完成物理练习\n截止时间：2026年12月15日', engine: 'native-chinese' };
+      if (m.method === 'recognizeImage') result = window.__ocrResult || { text: '完成物理练习\n截止时间：2026年12月15日', engine: 'native-chinese' };
       setTimeout(() => ShikeNative.onmessage?.({ data: JSON.stringify({ id: m.id, ok: !error, result, error }) }), 5);
     } };
   });
@@ -98,4 +98,27 @@ test('consumed share does not resurrect a completed draft and an untrusted image
   await expect(page.locator('#toast')).toContainText('分享图片地址无效');
   expect(await page.evaluate(() => window.__inbox.length)).toBe(1);
   expect(await page.evaluate(() => window.__calls.some(c => c.method === 'shareConsume' && c.args.id.startsWith('44444444')))).toBe(false);
+});
+
+test('native text is independently checked on small title and date crops without reprocessing the full image', async ({ page }) => {
+  await app(page);
+  const image = await page.evaluate(() => {
+    window.__ocrResult = { text: '完成教学第三章习题\n截止时间：2026年12月30日 23:59', engine: 'native-chinese', width: 1400, height: 450, regions: [
+      { text: '完成教学第三章习题', left: 55, top: 40, right: 700, bottom: 100 },
+      { text: '截止时间：2026年12月30日 23:59', left: 55, top: 140, right: 1100, bottom: 200 },
+    ] };
+    window.__sizes = [];
+    const original = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function(...args) { window.__sizes.push([this.width, this.height]); return original.apply(this, args); };
+    const c = document.createElement('canvas'); c.width = 1400; c.height = 450;
+    const x = c.getContext('2d'); x.fillStyle = 'white'; x.fillRect(0, 0, c.width, c.height); x.fillStyle = '#111'; x.font = '48px "Microsoft YaHei"';
+    x.fillText('完成数学第三章习题', 60, 90); x.fillText('截止时间：2026年12月30日 23:59', 60, 190);
+    return c.toDataURL().split(',')[1];
+  });
+  await page.getByRole('button', { name: /识别课程截图/ }).click();
+  await page.locator('#screenshot-file').setInputFiles({ name: 'native-correction.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') });
+  await expect(page.locator('#review-form [name=title]')).toHaveValue('完成数学第三章习题');
+  await expect(page.locator('#review-form [name=dueDate]')).toHaveValue('2026-12-30');
+  const sizes = await page.evaluate(() => window.__sizes);
+  expect(sizes).toHaveLength(2); expect(sizes.every(([w, h]) => w < 1200 && h < 120)).toBe(true);
 });
