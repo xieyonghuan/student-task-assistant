@@ -31,7 +31,7 @@ public class SharingTest {
             incoming.setClipData(ClipData.newRawUri("duplicate", uris.get(0)));
             imageId = ShareStore.receive(context, incoming);
             // Sender's files and grants can disappear: our copies must survive.
-            for (Uri uri : uris) context.getContentResolver().delete(uri, null, null);
+            for (Iterator<Uri> iterator = uris.iterator(); iterator.hasNext();) { context.getContentResolver().delete(iterator.next(), null, null); iterator.remove(); }
             JSONObject images = null;
             JSONArray pending = ShareStore.pending(context);
             for (int i = 0; i < pending.length(); i++) if (pending.getJSONObject(i).getString("id").equals(imageId)) images = pending.getJSONObject(i);
