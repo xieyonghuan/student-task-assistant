@@ -76,7 +76,7 @@ final class NativeOcr implements AutoCloseable {
         }
         cuts.add(height); return cuts;
     }
-    JSONObject recognize(String content) throws Exception {
+    JSONObject recognize(String content, boolean accurate) throws Exception {
         if (content.length() > 16000000) throw new IllegalArgumentException("图片过大，请裁剪课程通知后重试。");
         byte[] bytes = Base64.decode(content, Base64.DEFAULT);
         BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
@@ -87,7 +87,9 @@ final class NativeOcr implements AutoCloseable {
         if (decoded == null) throw new IllegalArgumentException("无法读取图片。");
         Bitmap bitmap = fitText(decoded);
         long start = android.os.SystemClock.elapsedRealtime();
-        StringBuilder text = new StringBuilder(); ArrayList<Integer> cuts = cuts(bitmap);
+        StringBuilder text = new StringBuilder(); ArrayList<Integer> cuts;
+        if (accurate) cuts = cuts(bitmap);
+        else { cuts = new ArrayList<>(); cuts.add(0); cuts.add(bitmap.getHeight()); }
         JSONArray regions = new JSONArray();
         com.google.android.gms.tasks.Task<com.google.mlkit.vision.text.Text> running = null;
         try {

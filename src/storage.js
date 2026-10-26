@@ -104,6 +104,7 @@ export function parseBackup(text) {
     if (task.dueDate !== undefined && typeof task.dueDate !== 'string') throw new Error('截止日期格式无效。');
     if (task.dueTime !== undefined && typeof task.dueTime !== 'string') throw new Error('截止时间格式无效。');
     if (task.details !== undefined && typeof task.details !== 'string') throw new Error('任务要求格式无效。');
+    if (task.course !== undefined && typeof task.course !== 'string') throw new Error('课程名称格式无效。');
     const error = validateTask(task);
     if (error) throw new Error(error);
     return { ...sanitizeTask(task), updatedAt: task.updatedAt };

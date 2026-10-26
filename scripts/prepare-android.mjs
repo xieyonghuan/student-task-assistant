@@ -1,6 +1,10 @@
-import { cp, mkdir, readFile, writeFile, readdir, rename } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 const target = path.resolve('android/app/src/main/assets/web');
+if (!target.startsWith(path.resolve() + path.sep) || JSON.parse(await readFile('package.json', 'utf8')).name !== 'study-task-assistant') throw new Error('Unexpected Android assets workspace');
+await stat(path.resolve('dist/index.html'));
+// Repeated local builds must not package obsolete hashed JavaScript chunks.
+await rm(target, { recursive: true, force: true });
 await mkdir(target, { recursive: true });
 await cp(path.resolve('dist'), target, { recursive: true });
 // AAPT otherwise gunzips .gz assets and strips their suffix. Keep their exact

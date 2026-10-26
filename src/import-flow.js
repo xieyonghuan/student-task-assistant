@@ -1,4 +1,4 @@
-import { newId, extractTasks, validateTask } from './domain.js';
+import { newId, extractTasks, extractDeadline, localDate, validDate, validateTask } from './domain.js';
 import { putDraft, deleteDraft, replaceImportDraft, loadDraftFile, putTaskWithDraft } from './storage.js';
 import { validateImages, batchDuplicates, hasImportDraft, importFinished } from './batch.js';
 
@@ -15,6 +15,25 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
   element.innerHTML = `<div class="import-page-nav"><button class="text-button" id="back-to-source">← 返回修改原文</button><button class="button button-light" id="continue-review">继续确认任务 →</button></div><p id="draft-state" class="source-note" role="status">草稿自动保存在本机；保存完成后自动清理。</p><div class="import-steps"><span><b>1</b> 导入通知</span><i></i><span><b>2</b> 逐张识别</span><i></i><span><b>3</b> 汇总确认</span></div><div class="import-layout"><section class="source-panel"><h3>课程通知 <span>仅在本地处理</span></h3><input id="screenshot-file" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" multiple hidden><div id="image-drop" class="image-drop" tabindex="0" role="button" aria-label="选择课程通知截图"><div id="image-preview"><span class="upload-symbol">${icon('upload')}</span><strong>选择一张或多张课程通知截图</strong><p>点击选择，或将图片拖到这里</p><small>最多 20 张 · 每张不超过 20 MB · 合计不超过 100 MB</small></div></div><div id="source-list"></div><label class="field">通知文字 <span class="optional">也可以直接粘贴</span><textarea id="notification-text" rows="7" maxlength="100000" placeholder="识别后的文字会显示在这里，也可以粘贴通知文字。"></textarea></label><button id="extract-tasks" class="button button-light full-width">${icon('spark')} 从文字提取任务</button><p class="source-note">截图暂存于本机草稿，整批保存完成或放弃草稿后清理，不随任务保存。</p></section><section id="review-panel" class="review-panel"></section></div>`;
   const raw = $('#notification-text', element), panel = $('#review-panel', element), sourcePanel = $('.source-panel', element);
   raw.value = model.text;
+  model.accuracy ||= 'fast';
+  const options = document.createElement('div'); options.className = 'import-options';
+  options.innerHTML = `<label class="field">识别方式<select id="ocr-accuracy"><option value="fast">快速识别（默认）</option><option value="accurate">精细复核（较慢）</option></select></label><label class="field">通知发出日期<input id="notice-date" type="date" min="1900-01-01" max="2200-12-31" value="${localDate(new Date(model.referenceTime))}"></label><button class="text-button" id="recalculate-date">重算相对截止日期</button><p class="source-note">“下周一”等时间按通知发出日期计算；旧通知请改日期后重算。精细模式额外核对文字，耗时更长。</p>`;
+  $('#draft-state', element).after(options);
+  $('#ocr-accuracy', options).value = model.accuracy;
+  $('#ocr-accuracy', options).onchange = event => { model.accuracy = event.target.value; persist(); };
+  function updateReference() {
+    const date = $('#notice-date', options).value;
+    if (!validDate(date)) throw new Error('请选择有效的通知日期。');
+    const prior = new Date(model.referenceTime), [year, month, day] = date.split('-').map(Number);
+    model.referenceTime = new Date(year, month - 1, day, prior.getHours(), prior.getMinutes(), prior.getSeconds()).toISOString();
+    for (const source of model.sources) source.referenceTime = model.referenceTime;
+  }
+  $('#notice-date', options).onchange = () => ui.safely(async () => { updateReference(); await persist(true); });
+  $('#recalculate-date', options).onclick = () => ui.safely(async () => {
+    remember(); updateReference();
+    for (const task of model.tasks) if (/(?:下|本|这)?(?:周|週)|星期|礼拜|[今明后]天|[今明后]日|[今明]晚|\bnext\s*(?:mon|tues|wednes|thurs|fri|satur|sun)day/i.test(task.details)) Object.assign(task, extractDeadline(task.details, new Date(model.referenceTime)));
+    if (model.tasks.length) showDraft(); await persist(true); ui.toast('已按通知发出日期重算，请核对截止日期。');
+  });
   function snapshot() { return { ...structuredClone(model), updatedAt: new Date().toISOString() }; }
   function remember() {
     const form = $('#review-form', panel);
@@ -204,7 +223,7 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
             if (!alive) return;
             $('#ocr-message', panel).textContent = `${source.name}：${message}`;
             $('#ocr-bar', panel).style.width = `${Math.max(3, Math.round(progress * 100))}%`;
-          });
+          }, { accuracy: model.accuracy });
           if (!alive) return;
           if (!result.text.trim()) throw new Error('没有识别到文字，可重试或跳过这张截图。');
           source.text = result.text; source.status = 'done'; delete source.error;
@@ -244,7 +263,8 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
     if (hasImportDraft(model) && !window.confirm('更换截图会替换尚未保存的草稿，已保存的任务不受影响。继续吗？')) return;
     const sources = files.map(file => ({ id: newId(), name: file.name, status: 'pending', text: '' }));
     completed = false;
-    Object.assign(model, { text: '', extraText: '', tasks: [], sources, saved: 0, skipped: 0, overview: files.length > 1, stage: 'review', referenceTime: new Date().toISOString() }); raw.value = '';
+    updateReference();
+    Object.assign(model, { text: '', extraText: '', tasks: [], sources, saved: 0, skipped: 0, overview: files.length > 1, stage: 'review' }); raw.value = '';
     try {
       await serial(() => replaceImportDraft(snapshot(), files.map((blob, index) => ({ id: sources[index].id, blob }))));
       ui.onDraft(snapshot()); filesList(); runQueue();
@@ -255,7 +275,8 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
     if (model.tasks.length && !window.confirm('重新提取会替换尚未确认的结果，已保存的任务不受影响。继续吗？')) return;
     model.text = raw.value;
     if (!model.text.trim()) { ui.toast('请先上传截图或粘贴通知文字。', true); return; }
-    model.tasks = extractTasks(model.text).map(task => ({ ...task, selected: true }));
+    updateReference();
+    model.tasks = extractTasks(model.text, new Date(model.referenceTime)).map(task => ({ ...task, selected: true }));
     completed = false;
     for (const source of model.sources) if (source.status === 'failed') source.status = 'skipped';
     model.saved = model.skipped = 0;
@@ -279,6 +300,7 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
     setStage(stage) {
       if (stage !== 'review') remember();
       model.stage = stage;
+      for (const input of $$('input, select, button', options)) input.disabled = busy || saving;
       sourcePanel.hidden = stage === 'review'; panel.hidden = stage !== 'review';
       $('#back-to-source', element).hidden = stage !== 'review'; $('#back-to-source', element).disabled = busy || saving;
       $('#continue-review', element).hidden = stage === 'review' || (!model.tasks.length && !model.sources.length);

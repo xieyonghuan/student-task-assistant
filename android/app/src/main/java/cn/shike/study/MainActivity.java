@@ -171,12 +171,31 @@ public final class MainActivity extends Activity {
     }
     private void dispatch(String method, JSONObject args, Reply reply) throws Exception {
         switch (method) {
+            case "readClipboard": {
+                try {
+                if (!hasWindowFocus()) throw new IllegalStateException("请在拾课窗口中点击粘贴，或长按输入框粘贴文字。");
+                android.content.ClipboardManager clipboard = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                android.content.ClipData clip = clipboard.getPrimaryClip();
+                CharSequence value = clip != null && clip.getItemCount() > 0 ? clip.getItemAt(0).getText() : null;
+                String text = value == null ? "" : value.toString();
+                if (text.length() > 100000) throw new IllegalArgumentException("通知文字超过 10 万字，请分批粘贴。");
+                reply.send(new JSONObject().put("text", text), null);
+                } catch (Exception error) { reply.send(null, error); }
+                break;
+            }
             case "shareInbox": background(reply, () -> ShareStore.pending(this)); break;
             case "shareConsume": background(reply, () -> { ShareStore.consume(this, args.getString("id")); return true; }); break;
             case "shareTasks": startActivity(Intent.createChooser(ShareStore.outgoing(args.getString("text")), "分享课程任务")); reply.send(true, null); break;
+            case "shareTaskImage":
+                worker.execute(() -> {
+                    try {
+                        Intent image=TaskCardStore.create(this,args.getString("content"));
+                        runOnUiThread(() -> {try{startActivity(Intent.createChooser(image,"分享任务图片卡片"));reply.send(true,null);}catch(Exception error){reply.send(null,error);}});
+                    } catch(Exception error){reply.send(null,error);}
+                }); break;
             case "recognizeImage": background(reply, () -> {
                 if (ocr == null) ocr = new NativeOcr();
-                return ocr.recognize(args.getString("content"));
+                return ocr.recognize(args.getString("content"), "accurate".equals(args.optString("accuracy")));
             }); break;
             case "calendarStatus": background(reply, () -> calendar.status()); break;
             case "calendarSync": background(reply, () -> calendar.sync(args == null ? null : args.optJSONArray("tasks"))); break;

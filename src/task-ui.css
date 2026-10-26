@@ -1,4 +1,12 @@
 /* Keep the same reading and input order on desktop, tablet and phone. */
+.course-label { display: block; color: #526b96; font-size: 13px; margin-bottom: 5px; }
+.share-actions { flex-wrap: wrap; }
+.share-card-preview { border-top: 1px solid #dce5f5; margin-top: 16px; padding-top: 16px; }
+.share-card-preview[hidden] { display: none; }
+.share-card-preview img { display: block; max-width: 100%; height: auto; margin: 0 auto 14px; }
+.import-options { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; margin: 16px 0; }
+.import-options .field { flex: 1 1 170px; margin: 0; }
+.import-options .source-note { width: 100%; }
 .task-tools { flex-wrap: wrap; }
 .task-tools .search-box { flex: 1 1 200px; }
 .share-task-options { max-height: 32dvh; overflow-y: auto; margin-bottom: 16px; }

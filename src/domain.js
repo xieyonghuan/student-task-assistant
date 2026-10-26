@@ -129,7 +129,11 @@ function relativeDeadlines(text, now) {
 }
 
 export function extractDeadline(text, now = new Date()) {
-  const normalized = normalizeDateNumbers(normalizeNotice(text));
+  const weekdays = { monday: '一', tuesday: '二', wednesday: '三', thursday: '四', friday: '五', saturday: '六', sunday: '日' };
+  const normalized = normalizeDateNumbers(normalizeNotice(text))
+    .replace(/\bnext\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, (_, day) => '下周' + weekdays[day.toLowerCase()])
+    .replace(/(下下|下|本|这)?[ \t\n]*(?:周|週)[ \t\n]*([一二三四五六日天1-7])/g, (_, week = '', day) => week + '周' + day)
+    .replace(/周[ \t]*[—－-](?=[\p{Script=Han}，,。\s]|$)/gu, '周一');
   // A labelled end date takes precedence over a separately labelled start date.
   const labelled = normalized.match(/(?:提交截止(?:时间|日期)?|截止(?:时间|日期)|结束(?:时间|日期)|到期(?:时间|日期)|最迟提交时间|截止于|截至)[\s:：]*([^\n]+)/);
   let compact = (labelled ? labelled[1] : normalized).replace(/(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})[ \t]+(?=\d{1,2}[:：])/g, '$1/').replace(/[ \t]/g, '');
@@ -162,8 +166,23 @@ function titleFromText(text) {
   return title.slice(0, 80) || '待确认任务';
 }
 
+export function extractCourse(raw) {
+  const text = normalizeNotice(raw).replace(/課程/g, '课程');
+  const explicit = text.match(/(?:课程|科目)(?:名称|名稱)?\s*[:：]\s*([^\n，,；;]{1,80})/);
+  if (explicit) return explicit[1].trim();
+  for (const line of text.split('\n').map(line => line.trim())) {
+    const group = line.match(/^(.{2,60}?)(?:课程群|课程通知群|教学群|学习群)\s*(?:[（(]\d+[)）])?\s*$/);
+    if (group) return group[1].replace(/^[<＜‹《\s]+/, '').trim();
+  }
+  // File names can carry the course when a cropped screenshot omits the group.
+  const attachment = text.match(/作[业業]\s*[_＿.．\d\s]+([\p{Script=Han}]{2,20}?)(?:简介|簡介|绪论|緒論)/u);
+  return attachment?.[1] || '';
+}
+
 export function extractTasks(raw, now = new Date()) {
   let text = normalizeNotice(raw);
+  const course = extractCourse(text), contextDeadline = extractDeadline(text, now);
+  const finish = tasks => tasks.map(task => ({ ...task, course: extractCourse(task.details) || course }));
   // A decimal file size such as 12.8 KB is not task number 12.
   text = text.replace(/([^\n])\s+(?=\d+[、.)](?!\d)\s*\S)/g, '$1\n');
   // Keep the Chinese message when WeChat displays its matching translation.
@@ -189,7 +208,9 @@ export function extractTasks(raw, now = new Date()) {
       const body = lines.slice(reference, end >= 0 ? end : undefined);
       if (!body.slice(1).some(line => /^(?:另[外一]|第[二三四五六七八九十\d].*(?:项|次)作业)/.test(line))) {
         const details = [attachments[0], ...body].join('\n');
-        return [{ id: newId(), title: attachments[0].slice(0, 80), details, ...extractDeadline(details, now) }];
+        const deadline = extractDeadline(details, now);
+        const resolved = !deadline.dueDate && contextDeadline.dueDate && contextDeadline.dateConfirmed ? { ...contextDeadline, dateHint: contextDeadline.dateHint + ' 已结合通知上下文补全，请核对。' } : deadline;
+        return finish([{ id: newId(), title: attachments[0].slice(0, 80), details, ...resolved }]);
       }
     }
   }
@@ -197,7 +218,7 @@ export function extractTasks(raw, now = new Date()) {
   if (screenTitle && /(?:开始|起始|开放)时间/.test(text) && /(?:截止|结束)时间/.test(text)) {
     const fields = lines.filter(l => l === screenTitle || /^(?:开始时间|起始时间|开放时间|截止时间|结束时间|考试限时|具体要求|要求[:：])/.test(l));
     const details = fields.join('\n');
-    return [{ id: newId(), title: screenTitle, details, ...extractDeadline(details, now) }];
+    return finish([{ id: newId(), title: screenTitle, details, ...extractDeadline(details, now) }]);
   }
   const marker = /^(?:\d+[、.)](?!\d)|[一二三四五六七八九十]+[、.]|[（(]\d+[）)])\s*\S/;
   const actionable = /作业|提交|完成|阅读|背诵|实验|报告|练习|预习|复习|论文|测验|考试|报名|汇报|打卡|习题|签到|收集|问卷/;
@@ -213,7 +234,7 @@ export function extractTasks(raw, now = new Date()) {
   let current = [];
   const flush = () => { if (current.length) blocks.push(current.join('\n')); current = []; };
   for (const line of lines) {
-    if (!current.length && /^(?:课程|班级|学习)?(?:作业|任务)?通知[:：]?$/.test(line)) continue;
+    if (!current.length && /^(?:课程|課程|班级|班級|学习|學習)?(?:作业|作業|任务|任務)?通知[:：]?$/.test(line)) continue;
     if (numbered) {
       if (marker.test(line)) { flush(); current.push(line); }
       else if (current.length) current.push(line);
@@ -225,13 +246,14 @@ export function extractTasks(raw, now = new Date()) {
   // Keep otherwise unclassified content available for the user to review.
   if (!blocks.length) blocks.push(lines.join('\n'));
   const preamble = numbered ? lines.slice(0, lines.findIndex(l => marker.test(l))).join('\n') : '';
-  return blocks.map(block => {
+  return finish(blocks.map(block => {
     const contextual = preamble && /截止|前提交|[今明后]天|(?:周|星期|礼拜)[一二三四五六日天]/.test(preamble) ? `${block}\n通知共同说明：${preamble}` : block;
     return { id: newId(), title: titleFromText(block), details: contextual, ...extractDeadline(contextual, now) };
-  });
+  }));
 }
 
 export function validateTask(task) {
+  if (String(task.course || '').length > 80) return '课程名称请控制在 80 个字以内。';
   if (!String(task.title || '').trim()) return '请填写任务名称。';
   if (task.title.length > 120) return '任务名称请控制在 120 个字以内。';
   if (task.dueDate && !validDate(task.dueDate)) return '请选择有效的截止日期（1900—2200 年）。';
@@ -243,6 +265,7 @@ export function validateTask(task) {
 export function sanitizeTask(task) {
   return {
     id: task.id || newId(), title: String(task.title || '').trim(),
+    course: String(task.course || '').trim(),
     dueDate: task.dueDate || '', dueTime: task.dueDate ? task.dueTime || '' : '',
     details: String(task.details || '').trim(),
     createdAt: task.createdAt || new Date().toISOString(),

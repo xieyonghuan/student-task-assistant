@@ -29,6 +29,20 @@ public class SharingTest {
         while (System.currentTimeMillis() < until) { if ("true".equals(eval(script))) return; Thread.sleep(200); }
         fail("Dense screenshot pipeline failed: " + eval("document.body.innerText.slice(-1800)"));
     }
+    @Test public void taskCardPngUsesContentUriAndReadGrantForOtherApps() throws Exception {
+        Bitmap bitmap=Bitmap.createBitmap(960,500,Bitmap.Config.ARGB_8888);bitmap.eraseColor(Color.WHITE);
+        ByteArrayOutputStream output=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.PNG,100,output);bitmap.recycle();
+        Intent share=TaskCardStore.create(context,android.util.Base64.encodeToString(output.toByteArray(),android.util.Base64.NO_WRAP));
+        assertEquals(Intent.ACTION_SEND,share.getAction());assertEquals("image/png",share.getType());
+        Uri uri=share.getParcelableExtra(Intent.EXTRA_STREAM);assertNotNull(uri);assertEquals("content",uri.getScheme());assertEquals(context.getPackageName()+".taskcards",uri.getAuthority());
+        assertTrue((share.getFlags()&Intent.FLAG_GRANT_READ_URI_PERMISSION)!=0);assertEquals(uri,share.getClipData().getItemAt(0).getUri());
+        Context recipient=InstrumentationRegistry.getInstrumentation().getContext();
+        context.grantUriPermission(recipient.getPackageName(),uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        assertEquals(android.content.pm.PackageManager.PERMISSION_GRANTED,context.checkUriPermission(uri,-1,recipient.getApplicationInfo().uid,Intent.FLAG_GRANT_READ_URI_PERMISSION));
+        try(InputStream in=recipient.getContentResolver().openInputStream(uri)){assertEquals(137,in.read());assertEquals(80,in.read());assertEquals(78,in.read());assertEquals(71,in.read());}
+        finally{context.revokeUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}
+        try{TaskCardStore.create(context,android.util.Base64.encodeToString("invalid".getBytes(),android.util.Base64.NO_WRAP));fail("Invalid image accepted");}catch(IllegalArgumentException expected){}
+    }
     @Test public void textAndMultipleImageSharesAreCopiedPersistentlyAndConsumedWithoutExternalFileAccess() throws Exception {
         ArrayList<Uri> uris = new ArrayList<>(); String textId = null, imageId = null;
         try {
@@ -82,18 +96,22 @@ public class SharingTest {
             waitFor("!!document.querySelector('.home-capture')");
             eval("window.confirm=()=>true;document.querySelector('[data-action=import]').click()");
             waitFor("!!document.querySelector('#screenshot-file')");
-            for (int i = 0; i < 2; i++) {
+            for (int i = 0; i < 3; i++) {
+                boolean accurate = i > 0;
+                eval("const accuracy=document.querySelector('#ocr-accuracy');accuracy.value='"+(accurate ? "accurate" : "fast")+"';accuracy.dispatchEvent(new Event('change',{bubbles:true}))");
                 long start = android.os.SystemClock.elapsedRealtime(); String name = "dense-" + i + ".jpg";
                 eval("(()=>{const bytes=Uint8Array.from(atob(" + JSONObject.quote(encoded) + "),c=>c.charCodeAt(0));const d=new DataTransfer();d.items.add(new File([bytes]," + JSONObject.quote(name) + ",{type:'image/jpeg'}));const input=document.querySelector('#screenshot-file');input.files=d.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()");
                 waitFor("document.querySelector('#source-list')?.innerText.includes(" + JSONObject.quote(name) + ")");
                 waitFor("document.querySelector('#review-form [name=dueDate]')?.value==='2026-12-30'");
                 // Verify final task text from the same original native-rendered
                 // image, rather than accepting a model-specific character error.
-                assertEquals("true", eval("document.querySelector('#notification-text').value.includes('数学')"));
-                assertEquals("true", eval("document.querySelector('#review-form [name=title]').value.includes('数学')"));
+                if (accurate) {
+                    assertEquals("true", eval("document.querySelector('#notification-text').value.includes('数学')"));
+                    assertEquals("true", eval("document.querySelector('#review-form [name=title]').value.includes('数学')"));
+                }
                 eval("window.__denseEngine=null;const r=indexedDB.open('shike-study-tasks');r.onsuccess=()=>{const db=r.result;const q=db.transaction('drafts').objectStore('drafts').get('import');q.onsuccess=()=>{window.__denseEngine=q.result?.sources[0]?.engine;db.close();}};");
-                waitFor("window.__denseEngine==='native-chinese+verified'");
-                System.out.println("SHIKE_OCR_PIPELINE run=" + (i + 1) + " ms=" + (android.os.SystemClock.elapsedRealtime() - start));
+                waitFor("window.__denseEngine==='"+(accurate ? "native-chinese+verified" : "native-chinese")+"'");
+                System.out.println("SHIKE_OCR_PIPELINE mode="+(accurate ? "accurate" : "fast")+" run=" + (i + 1) + " ms=" + (android.os.SystemClock.elapsedRealtime() - start));
             }
         } finally { InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> activity.finish()); }
     }

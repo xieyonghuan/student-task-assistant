@@ -19,8 +19,10 @@ final class ShareStore {
     static boolean supported(Intent intent) {
         if (intent == null) return false;
         String action = intent.getAction(), type = intent.getType();
-        return (Intent.ACTION_SEND.equals(action) && ("text/plain".equals(type) || (type != null && type.startsWith("image/"))))
-            || (Intent.ACTION_SEND_MULTIPLE.equals(action) && type != null && type.startsWith("image/"));
+        boolean imageHint = type == null || type.startsWith("image/") || "application/octet-stream".equals(type) || "*/*".equals(type);
+        return (Intent.ACTION_SEND.equals(action) && ("text/plain".equals(type) || imageHint))
+            || (Intent.ACTION_SEND_MULTIPLE.equals(action) && imageHint)
+            || (Intent.ACTION_VIEW.equals(action) && imageHint && intent.getData() != null);
     }
     static synchronized String receive(Context context, Intent intent) throws Exception {
         if (!supported(intent)) throw new IllegalArgumentException("请选择文字或课程截图分享到拾课。");
@@ -55,9 +57,8 @@ final class ShareStore {
             JSONArray images = new JSONArray(); long total = 0;
             for (Uri uri : uris) {
                 if (uri == null || !"content".equals(uri.getScheme())) throw new IllegalArgumentException("仅支持通过系统授权的图片分享。");
-                String mime = context.getContentResolver().getType(uri);
-                if (mime == null) mime = intent.getType();
-                if (mime == null || !mime.startsWith("image/")) throw new IllegalArgumentException("分享中含有不支持的文件，请只选择截图。");
+                // WeChat/QQ may label an image as application/octet-stream.
+                // Validate the copied bytes below instead of trusting the MIME hint.
                 String filename = UUID.randomUUID() + ".img"; File dest = new File(dir, filename);
                 try (InputStream in = context.getContentResolver().openInputStream(uri); OutputStream out = new FileOutputStream(dest)) {
                     if (in == null) throw new IOException("图片访问授权已失效，请重新分享。");

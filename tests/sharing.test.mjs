@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractTasks } from '../src/domain.js';
+import { extractTasks, extractCourse, extractDeadline } from '../src/domain.js';
 import { formatSharedTasks } from '../src/sharing.js';
 
 test('decimal attachment sizes are not numbered assignments', () => {
@@ -30,4 +30,15 @@ test('task sharing preserves titles, requirements and dates without internal IDs
   assert.match(tasks[1].details, /暂无截止日期/);
   assert.throws(() => formatSharedTasks([]), /至少/);
   assert.throws(() => formatSharedTasks([{ title: 'x', details: 'x'.repeat(100000) }]), /过长/);
+});
+
+test('chat course context, wrapped relative weekdays and translated deadlines survive extraction', () => {
+  const raw = '统计学课程群(88)\n作业_2.统计学简介-练习.pdf\n这是第二次作业，请认真完成\n下周\n一收齐提交\n作业使用整张纸\n@所有人\nSubmit by next\nMonday.\n@Everyone';
+  const tasks = extractTasks(raw, new Date('2026-10-23T10:00:00+08:00'));
+  assert.equal(tasks.length, 1); assert.equal(tasks[0].course, '统计学'); assert.equal(tasks[0].dueDate, '2026-10-26');
+  assert.equal(extractCourse('作业_1.线性代数简介.pdf'), '线性代数');
+  assert.equal(extractDeadline('下周—交作业', new Date('2026-10-23T10:00:00+08:00')).dueDate, '2026-10-26');
+  assert.equal(extractDeadline('Submit by next\nMonday.', new Date('2026-10-23T10:00:00+08:00')).dueDate, '2026-10-26');
+  const shared = formatSharedTasks([{title:'完成练习',course:'统计学',dueDate:'2026-12-30'}, {title:'阅读章节',course:'英语',dueDate:'2026-12-31'}]);
+  assert.deepEqual(extractTasks(shared).map(task=>task.course), ['统计学','英语']);
 });

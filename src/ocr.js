@@ -122,7 +122,7 @@ async function imageCanvas(file) {
   return compactBlankRows(canvas, ink);
 }
 
-async function recognizeNative(file, job) {
+async function recognizeNative(file, job, accuracy) {
   job.onProgress('正在使用本机中文识别', 0.15);
   const bitmap = await createImageBitmap(file);
   if (!bitmap.width || !bitmap.height || bitmap.width * bitmap.height > 80000000) {
@@ -136,11 +136,11 @@ async function recognizeNative(file, job) {
   job.canvas = canvas;
   const content = canvas.toDataURL('image/jpeg', 0.93).split(',')[1];
   if (job.cancelled) throw cancelledError();
-  const result = await nativeCall('recognizeImage', { content });
+  const result = await nativeCall('recognizeImage', { content, accuracy });
   if (job.cancelled) throw cancelledError();
   if (!result.text?.trim()) throw new Error('本机识别未找到文字。');
   let text = result.text, warning;
-  if (result.regions?.length) {
+  if (accuracy === 'accurate' && result.regions?.length) {
     job.refining = true;
     job.onProgress('正在核对任务名称与截止日期', 0.85);
     try {
@@ -164,7 +164,7 @@ async function recognizeNative(file, job) {
       warning = '部分任务名称或日期未完成二次核对，请对照原图检查。';
     }
   }
-  return { text: normalizeNotice(text), engine: result.regions?.length ? 'native-chinese+verified' : result.engine, warning };
+  return { text: normalizeNotice(text), engine: accuracy === 'accurate' && result.regions?.length ? 'native-chinese+verified' : result.engine, warning };
 }
 
 async function refineDateLines(worker, canvas, data, job, onProgress) {
@@ -203,7 +203,7 @@ async function refineDateLines(worker, canvas, data, job, onProgress) {
   return text;
 }
 
-export async function recognizeImage(file, onProgress = () => {}) {
+export async function recognizeImage(file, onProgress = () => {}, { accuracy = 'fast' } = {}) {
   cancelOCR();
   const job = { cancelled: false, session: null, canvas: null, rejectCancel: null, onProgress };
   activeJob = job;
@@ -212,7 +212,7 @@ export async function recognizeImage(file, onProgress = () => {}) {
   let succeeded = false;
   const work = async () => {
     if (isNativeApp()) {
-      try { return await recognizeNative(file, job); }
+      try { return await recognizeNative(file, job, accuracy); }
       catch (error) {
         if (job.cancelled) throw error;
         onProgress('正在切换备用离线识别', 0.1);

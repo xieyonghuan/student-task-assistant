@@ -55,4 +55,4 @@ jobs:
         run: |
           sha256sum "shike-v${APP_VERSION}.apk" > "shike-v${APP_VERSION}.sha256"
           # Tag the publication commit; the signed manifest pins the exact tested APK source.
-          gh release create "v${APP_VERSION}" "shike-v${APP_VERSION}.apk" "shike-v${APP_VERSION}.sha256" --target "$GITHUB_SHA" --title "拾课 v${APP_VERSION} · 快捷分享与本机识别" --notes-file android/RELEASE.md
+          gh release create "v${APP_VERSION}" "shike-v${APP_VERSION}.apk" "shike-v${APP_VERSION}.sha256" --target "$GITHUB_SHA" --title "拾课 v${APP_VERSION} · 接收修复与任务图片卡片" --notes-file android/RELEASE.md

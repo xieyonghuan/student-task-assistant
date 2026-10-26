@@ -11,6 +11,7 @@ import { newId, extractTasks, findDuplicates, sanitizeTask, validateTask, taskGr
 import { loadTasks, putTask, deleteTask, parseBackup, restoreTasks, loadDraft, putDraft, deleteDraft, putTaskWithDraft } from './storage.js';
 import { createImportFlow } from './import-flow.js';
 import { receiveSharedItem, formatSharedTasks } from './sharing.js';
+import { createTaskCard } from './task-card.js';
 import { createCalendar } from './calendar.js';
 import { registerOffline, offlineStatus, prepareOffline } from './offline.js';
 import { isNativeApp, nativeCall } from './native.js';
@@ -134,7 +135,7 @@ function render() {
   renderTaskList();
   if (native && state.view === 'home') {
     const button = document.createElement('button'); button.className = 'text-button'; button.dataset.action = 'receive-share';
-    button.textContent = '接收分享'; button.title = '继续处理系统分享的通知'; $('.home-followup').append(button);
+    button.textContent = '接收 / 粘贴通知'; button.title = '接收系统分享，或提取已复制的文字'; $('.home-followup').append(button);
   }
   if (state.view === 'home' && (state.importDraft || state.manualDraft)) {
     const resume = $('.home-followup .text-button');
@@ -151,14 +152,14 @@ function dueLabel(task) {
 }
 function taskCard(task) {
   const completed = !!task.completedAt;
-  return `<article class="task-card ${completed ? 'is-complete' : ''}"><button class="complete-button ${completed ? 'checked' : ''}" data-action="toggle" data-id="${esc(task.id)}" aria-label="${completed ? '恢复任务：' : '标为已完成：'}${esc(task.title)}">${completed ? icon('check') : ''}</button><button class="task-content" data-action="edit" data-id="${esc(task.id)}"><strong>${esc(task.title)}</strong>${task.details ? `<p>${esc(task.details)}</p>` : ''}<span class="due-label ${taskGroup(task) === 'overdue' ? 'is-overdue' : ''}">${icon(task.dueDate ? 'calendar' : 'inbox')}${esc(dueLabel(task))}</span></button><div class="task-card-actions"><button class="icon-button" data-action="share-task" data-id="${esc(task.id)}" aria-label="分享任务：${esc(task.title)}">${icon('share')}</button><button class="icon-button" data-action="edit" data-id="${esc(task.id)}" aria-label="编辑任务：${esc(task.title)}">${icon('edit')}</button><button class="icon-button danger-hover" data-action="delete" data-id="${esc(task.id)}" aria-label="删除任务：${esc(task.title)}">${icon('trash')}</button></div></article>`;
+  return `<article class="task-card ${completed ? 'is-complete' : ''}"><button class="complete-button ${completed ? 'checked' : ''}" data-action="toggle" data-id="${esc(task.id)}" aria-label="${completed ? '恢复任务：' : '标为已完成：'}${esc(task.title)}">${completed ? icon('check') : ''}</button><button class="task-content" data-action="edit" data-id="${esc(task.id)}">${task.course ? `<small class="course-label">课程：${esc(task.course)}</small>` : ''}<strong>${esc(task.title)}</strong>${task.details ? `<p>${esc(task.details)}</p>` : ''}<span class="due-label ${taskGroup(task) === 'overdue' ? 'is-overdue' : ''}">${icon(task.dueDate ? 'calendar' : 'inbox')}${esc(dueLabel(task))}</span></button><div class="task-card-actions"><button class="icon-button" data-action="share-task" data-id="${esc(task.id)}" aria-label="分享任务：${esc(task.title)}">${icon('share')}</button><button class="icon-button" data-action="edit" data-id="${esc(task.id)}" aria-label="编辑任务：${esc(task.title)}">${icon('edit')}</button><button class="icon-button danger-hover" data-action="delete" data-id="${esc(task.id)}" aria-label="删除任务：${esc(task.title)}">${icon('trash')}</button></div></article>`;
 }
 function renderTaskList() {
   if (!$('#task-list')) return;
   const query = state.query.trim().toLowerCase();
   let tasks = state.tasks.filter(t => (state.view === 'completed' ? !!t.completedAt : !t.completedAt));
   if (!['all', 'completed'].includes(state.view)) tasks = tasks.filter(t => taskGroup(t) === state.view);
-  if (query) tasks = tasks.filter(t => `${t.title}\n${t.details}`.toLowerCase().includes(query));
+  if (query) tasks = tasks.filter(t => `${t.course || ''}\n${t.title}\n${t.details}`.toLowerCase().includes(query));
   const list = $('#task-list');
   if (!tasks.length) {
     list.innerHTML = `<div class="empty-state"><div class="empty-illustration">${icon(query ? 'search' : state.view === 'completed' ? 'circle' : 'inbox')}<span>✦</span></div><h3>${query ? '没有找到相关任务' : state.view === 'completed' ? '完成的每件事，都会留在这里' : state.view === 'all' ? '第一件小事，从这里开始' : '这里暂时没有任务'}</h3><p>${query ? '换个关键词试试，也可以清空搜索。' : state.view === 'completed' ? '完成任务后点一下圆圈，就能把它收好。' : '上传一张课程截图，或手动记下你的学习安排。'}</p>${query ? '<button class="text-button" data-action="clear-search">清空搜索</button>' : state.view !== 'completed' ? `<button class="button button-light" data-action="add">${icon('plus')} 添加第一项任务</button>` : ''}</div>`;
@@ -227,12 +228,13 @@ onInstallChange(() => {
 });
 
 function taskFields(task, prefix = '') {
-  return `<label class="field">任务名称 <span class="required">*</span><input name="title" maxlength="120" required placeholder="例如：完成高等数学第三章习题" value="${esc(task.title)}"></label><div class="date-fields"><label class="field">截止日期<input name="dueDate" type="date" min="1900-01-01" max="2200-12-31" value="${esc(task.dueDate)}"></label><label class="field">具体时间 <span class="optional">可不填</span><input name="dueTime" type="time" value="${esc(task.dueTime)}"></label></div><p class="field-note">${icon('help')} 只选日期时，按当天 00:00 截止。</p><label class="field">具体要求<textarea name="details" rows="5" maxlength="20000" placeholder="记录作业内容、提交要求等…">${esc(task.details)}</textarea></label><p class="form-error" id="${prefix}form-error" role="alert"></p>`;
+  return `<label class="field">课程名称 <span class="optional">可修改或补充</span><input name="course" maxlength="80" placeholder="例如：运筹学" value="${esc(task.course)}"></label><label class="field">任务名称 <span class="required">*</span><input name="title" maxlength="120" required placeholder="例如：完成高等数学第三章习题" value="${esc(task.title)}"></label><div class="date-fields"><label class="field">截止日期<input name="dueDate" type="date" min="1900-01-01" max="2200-12-31" value="${esc(task.dueDate)}"></label><label class="field">具体时间 <span class="optional">可不填</span><input name="dueTime" type="time" value="${esc(task.dueTime)}"></label></div><p class="field-note">${icon('help')} 只选日期时，按当天 00:00 截止。</p><label class="field">具体要求<textarea name="details" rows="5" maxlength="20000" placeholder="记录作业内容、提交要求等…">${esc(task.details)}</textarea></label><p class="form-error" id="${prefix}form-error" role="alert"></p>`;
 }
 function readTaskFields(form, base, trim = true) {
   const data = new FormData(form);
+  const course = String(data.get('course') || '');
   const title = String(data.get('title') || ''), details = String(data.get('details') || '');
-  return { ...base, title: trim ? title.trim() : title, dueDate: String(data.get('dueDate') || ''), dueTime: String(data.get('dueTime') || ''), details: trim ? details.trim() : details };
+  return { ...base, course: trim ? course.trim() : course, title: trim ? title.trim() : title, dueDate: String(data.get('dueDate') || ''), dueTime: String(data.get('dueTime') || ''), details: trim ? details.trim() : details };
 }
 function confirmDate(task, callback, onChange = () => {}) {
   const dialog = openDialog('确认截止日期', `对应任务：${task.title}`, `<div class="notice">${icon('calendar')}<p>${esc(task.dateHint || '请确认此任务的截止日期，或选择暂无截止日期。')}</p></div><label class="field">截止日期<input id="confirm-date" type="date" min="1900-01-01" max="2200-12-31" value="${esc(task.dueDate)}"></label><label class="field">具体时间 <span class="optional">可不填</span><input id="confirm-time" type="time" value="${esc(task.dueTime)}"></label><p class="field-note">只选择日期时，按当天 00:00 截止。</p><p class="form-error" role="alert"></p><div class="modal-actions"><button class="button button-light" id="no-date">暂无截止日期</button><button class="button button-primary" id="choose-date">确认日期</button></div>`);
@@ -310,7 +312,7 @@ async function editTask(id, restoring = false) {
   function preserve() {
     if (settled) return;
     const record = { id: 'manual', originalId: original?.id || null, task: readTaskFields(form, task, false), updatedAt: new Date().toISOString() };
-    if (!original && !['title', 'details', 'dueDate', 'dueTime'].some(name => record.task[name].trim())) {
+    if (!original && !['course', 'title', 'details', 'dueDate', 'dueTime'].some(name => record.task[name].trim())) {
       state.manualDraft = null;
       manualAction(() => deleteDraft('manual')).catch(error => { $('#manual-draft-state', dialog).textContent = error.message; });
       return;
@@ -374,7 +376,7 @@ async function receiveInbox(manual = false) {
   try {
     const items = await nativeCall('shareInbox');
     if (!Array.isArray(items)) throw new Error('分享队列暂时不可用，请稍后重试。');
-    if (!items.length) { if (manual) toast('没有待处理分享。在其他应用中选择文字或截图，点系统分享 → 拾课即可。'); return; }
+    if (!items.length) { if (manual) await pasteNotification(); return; }
     shouldResume = true;
     $('#app').inert = true;
     await manualWrites;
@@ -401,19 +403,67 @@ async function receiveInbox(manual = false) {
   }
 }
 
+async function pasteNotification() {
+  let text = '';
+  try { text = isNativeApp() ? (await nativeCall('readClipboard')).text : await navigator.clipboard.readText(); } catch { /* Offer a normal editable paste field below. */ }
+  const accept = async value => {
+    if (!value.trim()) throw new Error('请先复制课程通知文字，或在输入框中粘贴。');
+    if (importSession) { pendingImportWrites = importSession.dispose(); importSession = undefined; }
+    await pendingImportWrites;
+    await receiveSharedItem({ id: newId(), text: value, images: [], receivedAt: Date.now() });
+    state.importDraft = await loadDraft('import'); await startImport();
+  };
+  if (text?.trim()) { await accept(text); return; }
+  const dialog = openDialog('粘贴课程通知', '复制微信、QQ 中的通知文字后，在这里粘贴并提取任务。', '<label class="field">通知文字<textarea id="paste-notice" rows="8" maxlength="100000" placeholder="长按这里粘贴通知文字"></textarea></label><p class="form-error" role="alert"></p><button class="button button-primary" id="extract-paste">提取任务</button>');
+  $('#extract-paste', dialog).onclick = async () => {
+    try { await accept($('#paste-notice', dialog).value); dialog.close(); }
+    catch (error) { $('.form-error', dialog).textContent = error.message; }
+  };
+}
+
 function shareTasks(id) {
   const tasks = sortTasks(state.tasks.filter(task => id ? task.id === id : state.view === 'completed' ? !!task.completedAt : !task.completedAt && (state.view === 'all' || taskGroup(task) === state.view)));
   if (!tasks.length) { toast('当前没有可分享的课程任务。'); return; }
-  const dialog = openDialog('分享课程任务', '选择任务并检查内容，再选择发送到哪个应用。', `<div class="share-task-options">${tasks.map(task => `<label class="export-task"><input type="checkbox" name="share-task" value="${esc(task.id)}" checked><span><strong>${esc(task.title)}</strong><small>${esc(dueLabel(task))}</small></span></label>`).join('')}</div><label class="field">分享内容<textarea id="share-preview" rows="8" readonly></textarea></label><p id="share-status" role="status"></p><div class="modal-actions"><button class="button button-light" id="copy-share">复制内容</button><button class="button button-primary" id="send-share">选择分享应用</button></div>`);
+  const dialog = openDialog('分享课程任务', '可以分享文字，也可以生成包含课程、截止时间和要求的图片卡片。', `<div class="share-task-options">${tasks.map(task => `<label class="export-task"><input type="checkbox" name="share-task" value="${esc(task.id)}" checked><span><strong>${esc(task.title)}</strong><small>${esc(dueLabel(task))}</small></span></label>`).join('')}</div><label class="field">分享文字<textarea id="share-preview" rows="8" readonly></textarea></label><p id="share-status" role="status"></p><div class="modal-actions share-actions"><button class="button button-light" id="copy-share">复制文字</button><button class="button button-light" id="show-card">预览图片卡片</button><button class="button button-primary" id="send-share">选择分享应用</button></div><div id="share-card-wrap" class="share-card-preview" hidden><img id="share-card-preview" alt="待分享的课程任务图片卡片"><button class="button button-primary" id="send-card">分享图片卡片</button></div>`);
   const preview = $('#share-preview', dialog), status = $('#share-status', dialog), send = $('#send-share', dialog), copy = $('#copy-share', dialog);
+  const showCard = $('#show-card', dialog), cardWrap = $('#share-card-wrap', dialog);
+  let cardBlob, cardURL, cardGeneration = 0;
+  const selected = () => tasks.filter(task => $$('[name="share-task"]:checked', dialog).some(input => input.value === task.id));
+  function clearCard() { cardGeneration++; cardBlob = null; if (cardURL) URL.revokeObjectURL(cardURL); cardURL = null; cardWrap.hidden = true; }
+  dialog.addEventListener('close', clearCard);
   function update() {
-    try { preview.value = formatSharedTasks(tasks.filter(task => $$( '[name="share-task"]:checked', dialog).some(input => input.value === task.id))); status.textContent = ''; send.disabled = copy.disabled = false; }
-    catch (error) { preview.value = ''; status.textContent = error.message; send.disabled = copy.disabled = true; }
+    clearCard();
+    try { preview.value = formatSharedTasks(selected()); status.textContent = ''; send.disabled = copy.disabled = showCard.disabled = false; }
+    catch (error) { preview.value = ''; status.textContent = error.message; send.disabled = copy.disabled = showCard.disabled = true; }
   }
   dialog.addEventListener('change', update); update();
   copy.onclick = async () => {
     try { await navigator.clipboard.writeText(preview.value); status.textContent = '内容已复制，可粘贴发送。'; }
     catch { preview.focus(); preview.select(); status.textContent = '请长按或使用系统复制，再粘贴发送。'; }
+  };
+  showCard.onclick = async () => {
+    const generation = ++cardGeneration; showCard.disabled = true; status.textContent = '正在生成任务图片卡片…';
+    try {
+      const blob = await createTaskCard(selected());
+      if (!dialog.isConnected || generation !== cardGeneration) return;
+      cardBlob = blob; if (cardURL) URL.revokeObjectURL(cardURL); cardURL = URL.createObjectURL(blob);
+      $('#share-card-preview', dialog).src = cardURL; cardWrap.hidden = false;
+      status.textContent = '图片卡片已生成，核对后点击“分享图片卡片”。'; cardWrap.scrollIntoView({ block: 'nearest' });
+    } catch (error) { status.textContent = error.message; }
+    finally { if (dialog.isConnected) showCard.disabled = !selected().length; }
+  };
+  $('#send-card', dialog).onclick = async () => {
+    if (!cardBlob) return;
+    try {
+      if (isNativeApp()) {
+        const content = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result.split(',')[1]); reader.onerror = () => reject(new Error('无法读取图片卡片。')); reader.readAsDataURL(cardBlob); });
+        await nativeCall('shareTaskImage', { content }); status.textContent = '已打开图片分享面板。';
+      } else {
+        const file = new File([cardBlob], '拾课课程任务.png', { type: 'image/png' });
+        if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: '拾课课程任务' });
+        else { const link = document.createElement('a'); link.href = cardURL; link.download = file.name; link.click(); status.textContent = '图片已下载，可在相册中选择并发送。'; }
+      }
+    } catch (error) { if (error.name !== 'AbortError') status.textContent = error.message || '图片分享未完成，请重试。'; }
   };
   send.onclick = async () => {
     try {

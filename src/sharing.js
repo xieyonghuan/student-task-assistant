@@ -4,7 +4,7 @@ import { loadDraft, appendSharedDraft } from './storage.js';
 
 export function formatSharedTasks(tasks) {
   if (!tasks.length) throw new Error('请至少选择一项课程任务。');
-  const text = '拾课课程任务\n\n' + tasks.map((task, index) => `${index + 1}. ${task.title}\n截止时间：${task.dueDate ? task.dueDate + (task.dueTime ? ' ' + task.dueTime : '（当天 00:00）') : '暂无截止日期'}${task.details ? '\n要求：' + task.details : ''}${task.completedAt ? '\n状态：已完成' : ''}`).join('\n\n');
+  const text = '拾课课程任务\n\n' + tasks.map((task, index) => `${index + 1}. ${task.title}${task.course ? '\n课程：' + task.course : ''}\n截止时间：${task.dueDate ? task.dueDate + (task.dueTime ? ' ' + task.dueTime : '（当天 00:00）') : '暂无截止日期'}${task.details ? '\n要求：' + task.details : ''}${task.completedAt ? '\n状态：已完成' : ''}`).join('\n\n');
   if (text.length > 100000) throw new Error('分享内容过长，请减少任务数量。');
   return text;
 }

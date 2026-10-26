@@ -7,6 +7,7 @@ async function app(page) {
       const m = JSON.parse(raw); window.__calls.push(m);
       let result = { available: true, enabled: false, granted: false }, error;
       if (m.method === 'shareInbox') result = window.__inbox;
+      if (m.method === 'readClipboard') result = { text: window.__clipboardText || '' };
       if (m.method === 'shareConsume') { if (window.__failAck) error = 'ack interrupted'; else window.__inbox = window.__inbox.filter(item => item.id !== m.args.id); }
       if (m.method === 'recognizeImage') result = window.__ocrResult || { text: '完成物理练习\n截止时间：2026年12月15日', engine: 'native-chinese' };
       setTimeout(() => ShikeNative.onmessage?.({ data: JSON.stringify({ id: m.id, ok: !error, result, error }) }), 5);
@@ -116,9 +117,71 @@ test('native text is independently checked on small title and date crops without
     return c.toDataURL().split(',')[1];
   });
   await page.getByRole('button', { name: /识别课程截图/ }).click();
+  await page.locator('#ocr-accuracy').selectOption('accurate');
   await page.locator('#screenshot-file').setInputFiles({ name: 'native-correction.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') });
   await expect(page.locator('#review-form [name=title]')).toHaveValue('完成数学第三章习题');
   await expect(page.locator('#review-form [name=dueDate]')).toHaveValue('2026-12-30');
   const sizes = await page.evaluate(() => window.__sizes);
   expect(sizes).toHaveLength(2); expect(sizes.every(([w, h]) => w < 1200 && h < 120)).toBe(true);
+});
+
+test('copied text is pasted by the receive button, extracts the course and recalculates next Monday from the notice date', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-26T18:00:00+08:00') });
+  await app(page);
+  await page.evaluate(() => { window.__clipboardText = '统计学课程群(88)\n作业_2.统计学简介-练习.pdf\n这是第二次作业，请完成练习\n下周一收齐提交\n@所有人'; });
+  await page.getByRole('button', { name: '接收 / 粘贴通知', exact: true }).click();
+  await expect(page.locator('#review-form [name=course]')).toHaveValue('统计学');
+  await expect(page.locator('#review-form [name=dueDate]')).toHaveValue('2026-11-02');
+  await page.locator('#notice-date').fill('2026-10-23');
+  await page.getByRole('button', { name: '重算相对截止日期', exact: true }).click();
+  await expect(page.locator('#review-form [name=dueDate]')).toHaveValue('2026-10-26');
+  await page.locator('#review-form [name=course]').fill('统计学课程');
+  await page.reload();
+  await expect(page.locator('#review-form [name=course]')).toHaveValue('统计学课程');
+  await expect(page.locator('#review-form [name=dueDate]')).toHaveValue('2026-10-26');
+});
+
+test('empty or unavailable clipboard offers an editable paste field instead of telling the user to share again', async ({ page }) => {
+  await app(page);
+  await page.getByRole('button', { name: '接收 / 粘贴通知', exact: true }).click();
+  await page.locator('#paste-notice').fill('课程：物理\n完成物理练习\n截止时间：2026年12月30日');
+  await page.getByRole('button', { name: '提取任务', exact: true }).click();
+  await expect(page.locator('#review-form [name=course]')).toHaveValue('物理');
+  await expect(page.locator('#review-form [name=dueDate]')).toHaveValue('2026-12-30');
+});
+
+test('fast mode skips the second OCR engine even when native results include verification regions', async ({ page }) => {
+  await app(page);
+  const image = await page.evaluate(() => {
+    window.__workers = 0; const Worker = window.Worker;
+    window.Worker = class extends Worker { constructor(...args) { super(...args); window.__workers++; } };
+    window.__ocrResult = { text: '课程：物理\n完成物理练习\n截止时间：2026年12月30日', engine: 'native-chinese', width:100,height:100,regions:[{text:'完成物理练习',left:0,top:0,right:100,bottom:100}] };
+    const c = document.createElement('canvas'); c.width = c.height = 100; return c.toDataURL().split(',')[1];
+  });
+  await page.getByRole('button', { name: /识别课程截图/ }).click();
+  await expect(page.locator('#ocr-accuracy')).toHaveValue('fast');
+  await page.locator('#screenshot-file').setInputFiles({name:'fast.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await expect(page.locator('#review-form [name=dueDate]')).toHaveValue('2026-12-30');
+  expect(await page.evaluate(()=>window.__workers)).toBe(0);
+  expect(await page.evaluate(()=>window.__calls.find(call=>call.method==='recognizeImage').args.accuracy)).toBe('fast');
+});
+
+test('task image cards are previewed and shared as PNG, and changing selected tasks invalidates the old image', async ({ page }) => {
+  await app(page);
+  await seed(page, ['物理练习', '英语阅读'].map((title,index)=>['tasks',{id:String(index),title,course:index?'英语':'物理',details:'完成题目并写出步骤。',dueDate:'2026-12-30',dueTime:'18:30',createdAt:new Date().toISOString()}]));
+  await page.goto('./#/tasks'); await page.reload();
+  await page.getByRole('button',{name:'分享任务',exact:true}).click();
+  await page.getByRole('button',{name:'预览图片卡片',exact:true}).click();
+  await expect(page.locator('#share-card-preview')).toBeVisible();
+  expect(await page.locator('#share-card-preview').evaluate(image=>image.naturalWidth)).toBe(960);
+  await page.getByRole('button',{name:'分享图片卡片',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>window.__calls.filter(call=>call.method==='shareTaskImage').length)).toBe(1);
+  const content=await page.evaluate(()=>window.__calls.find(call=>call.method==='shareTaskImage').args.content);
+  expect(Buffer.from(content,'base64').subarray(0,8).toString('hex')).toBe('89504e470d0a1a0a');
+  await page.locator('[name=share-task]').last().uncheck();
+  await expect(page.locator('#share-card-wrap')).toBeHidden();
+  await page.getByRole('button',{name:'预览图片卡片',exact:true}).click();
+  await expect(page.locator('#share-card-preview')).toBeVisible();
+  await page.setViewportSize({width:393,height:864});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
