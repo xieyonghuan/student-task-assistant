@@ -98,7 +98,7 @@ public class SharingTest {
             waitFor("!!document.querySelector('#screenshot-file')");
             for (int i = 0; i < 3; i++) {
                 boolean accurate = i > 0;
-                eval("const accuracy=document.querySelector('#ocr-accuracy');accuracy.value='"+(accurate ? "accurate" : "fast")+"';accuracy.dispatchEvent(new Event('change',{bubbles:true}))");
+                eval("(()=>{const accuracy=document.querySelector('#ocr-accuracy');accuracy.value='"+(accurate ? "accurate" : "fast")+"';accuracy.dispatchEvent(new Event('change',{bubbles:true}));})()");
                 long start = android.os.SystemClock.elapsedRealtime(); String name = "dense-" + i + ".jpg";
                 eval("(()=>{const bytes=Uint8Array.from(atob(" + JSONObject.quote(encoded) + "),c=>c.charCodeAt(0));const d=new DataTransfer();d.items.add(new File([bytes]," + JSONObject.quote(name) + ",{type:'image/jpeg'}));const input=document.querySelector('#screenshot-file');input.files=d.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()");
                 waitFor("document.querySelector('#source-list')?.innerText.includes(" + JSONObject.quote(name) + ")");
@@ -109,7 +109,7 @@ public class SharingTest {
                     assertEquals("true", eval("document.querySelector('#notification-text').value.includes('数学')"));
                     assertEquals("true", eval("document.querySelector('#review-form [name=title]').value.includes('数学')"));
                 }
-                eval("window.__denseEngine=null;const r=indexedDB.open('shike-study-tasks');r.onsuccess=()=>{const db=r.result;const q=db.transaction('drafts').objectStore('drafts').get('import');q.onsuccess=()=>{window.__denseEngine=q.result?.sources[0]?.engine;db.close();}};");
+                eval("(()=>{window.__denseEngine=null;const r=indexedDB.open('shike-study-tasks');r.onsuccess=()=>{const db=r.result;const q=db.transaction('drafts').objectStore('drafts').get('import');q.onsuccess=()=>{window.__denseEngine=q.result?.sources[0]?.engine;db.close();}};})()");
                 waitFor("window.__denseEngine==='"+(accurate ? "native-chinese+verified" : "native-chinese")+"'");
                 System.out.println("SHIKE_OCR_PIPELINE mode="+(accurate ? "accurate" : "fast")+" run=" + (i + 1) + " ms=" + (android.os.SystemClock.elapsedRealtime() - start));
             }
