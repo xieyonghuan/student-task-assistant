@@ -2,8 +2,11 @@
 export const isNativeApp = () => typeof globalThis.ShikeNative?.postMessage === 'function';
 let sequence = 0;
 const pending = new Map();
+let attachedBridge;
 function attach() {
   if (!isNativeApp()) return;
+  if (attachedBridge === globalThis.ShikeNative) return;
+  attachedBridge = globalThis.ShikeNative;
   globalThis.ShikeNative.onmessage = event => {
     let data;
     try { data = JSON.parse(event.data); } catch { return; }

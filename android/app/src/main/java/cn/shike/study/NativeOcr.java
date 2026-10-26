@@ -47,6 +47,33 @@ final class NativeOcr implements AutoCloseable {
         if (resized != bitmap) bitmap.recycle();
         return resized;
     }
+    private ArrayList<Integer> cuts(Bitmap bitmap) {
+        // A tall screen gets internally reduced by the detector. Split at blank
+        // rows so small Chinese strokes keep their shape, with no clipped lines.
+        ArrayList<Integer> gaps = new ArrayList<>(), cuts = new ArrayList<>();
+        int width = bitmap.getWidth(), height = bitmap.getHeight(), blank = -1;
+        int[] row = new int[width];
+        for (int y = 0; y <= height; y++) {
+            int ink = 0;
+            if (y < height) {
+                bitmap.getPixels(row, 0, width, 0, y, width, 1);
+                for (int x = 0; x < width; x += 2) {
+                    int color = row[x];
+                    if (((color >> 16) & 255) * 0.299 + ((color >> 8) & 255) * 0.587 + (color & 255) * 0.114 < 180) ink++;
+                }
+            }
+            if (y < height && ink < Math.max(2, width / 1000)) { if (blank < 0) blank = y; }
+            else if (blank >= 0) { if (y - blank >= 8) gaps.add((blank + y) / 2); blank = -1; }
+        }
+        int top = 0; cuts.add(0);
+        while (height - top > 1000) {
+            int next = -1;
+            for (int gap : gaps) if (gap >= top + 350 && gap <= top + 1000) next = gap;
+            if (next < 0) break;
+            cuts.add(next); top = next;
+        }
+        cuts.add(height); return cuts;
+    }
     JSONObject recognize(String content) throws Exception {
         if (content.length() > 16000000) throw new IllegalArgumentException("图片过大，请裁剪课程通知后重试。");
         byte[] bytes = Base64.decode(content, Base64.DEFAULT);
@@ -58,12 +85,24 @@ final class NativeOcr implements AutoCloseable {
         if (decoded == null) throw new IllegalArgumentException("无法读取图片。");
         Bitmap bitmap = fitText(decoded);
         long start = android.os.SystemClock.elapsedRealtime();
-        com.google.android.gms.tasks.Task<com.google.mlkit.vision.text.Text> task = recognizer.process(InputImage.fromBitmap(bitmap, 0));
+        StringBuilder text = new StringBuilder(); ArrayList<Integer> cuts = cuts(bitmap);
+        com.google.android.gms.tasks.Task<com.google.mlkit.vision.text.Text> running = null;
         try {
-            String text = Tasks.await(task, 45, TimeUnit.SECONDS).getText();
-            return new JSONObject().put("text", text).put("engine", "native-chinese")
+            for (int i = 0; i < cuts.size() - 1; i++) {
+                if (android.os.SystemClock.elapsedRealtime() - start >= 45000) throw new java.util.concurrent.TimeoutException("本机识别等待超时。");
+                Bitmap tile = Bitmap.createBitmap(bitmap, 0, cuts.get(i), bitmap.getWidth(), cuts.get(i + 1) - cuts.get(i));
+                com.google.android.gms.tasks.Task<com.google.mlkit.vision.text.Text> task = recognizer.process(InputImage.fromBitmap(tile, 0));
+                running = task;
+                try {
+                    if (text.length() > 0) text.append('\n');
+                    text.append(Tasks.await(task, Math.max(1, 45000 - (android.os.SystemClock.elapsedRealtime() - start)), TimeUnit.MILLISECONDS).getText());
+                } finally {
+                    if (tile != bitmap) { if (task.isComplete()) tile.recycle(); else task.addOnCompleteListener(ignored -> tile.recycle()); }
+                }
+            }
+            return new JSONObject().put("text", text.toString()).put("engine", "native-chinese")
                 .put("elapsedMs", android.os.SystemClock.elapsedRealtime() - start).put("width", bitmap.getWidth()).put("height", bitmap.getHeight());
-        } finally { if (task.isComplete()) bitmap.recycle(); else task.addOnCompleteListener(ignored -> bitmap.recycle()); }
+        } finally { if (running == null || running.isComplete()) bitmap.recycle(); else running.addOnCompleteListener(ignored -> bitmap.recycle()); }
     }
     @Override public void close() { recognizer.close(); }
 }
