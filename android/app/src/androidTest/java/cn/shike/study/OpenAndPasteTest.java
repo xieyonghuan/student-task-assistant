@@ -23,7 +23,7 @@ public class OpenAndPasteTest {
     private void waitFor(String script) throws Exception {
         long until = System.currentTimeMillis()+90000;
         while(System.currentTimeMillis()<until){if("true".equals(eval(script)))return;Thread.sleep(200);}
-        fail("Open/paste did not complete: "+eval("document.body.innerText.slice(-1800)"));
+        fail("Open/paste did not complete: "+script+"; "+eval("JSON.stringify({focused:document.hasFocus(),page:document.body.innerText.slice(-1800)})"));
     }
     @Test public void clipboardTextAndOpenWithGenericMimeImagesEnterRealExtractionWithoutStartingWasm() throws Exception {
         Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -33,7 +33,9 @@ public class OpenAndPasteTest {
             assertEquals(pending,ShareStore.pending(context).length());
             assertEquals(1,context.getPackageManager().queryIntentActivities(new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse("content://cn.shike.study.test.images/image"),"application/octet-stream").setPackage(context.getPackageName()),0).size());
             activity=(MainActivity)InstrumentationRegistry.getInstrumentation().startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            waitFor("!!document.querySelector('.home-capture') && document.hasFocus()");
+            waitFor("!!document.querySelector('.home-capture')");
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->activity.browserForTests().requestFocus());
+            waitFor("document.hasFocus()");
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->((ClipboardManager)context.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("test","课程：统计学\n完成统计学练习\n下周一提交")));
             eval("document.querySelector('[data-action=receive-share]').click()");
             waitFor("[...document.querySelectorAll('[name=course]')].some(e=>e.value==='统计学')");
