@@ -14,7 +14,7 @@ export function readRoute() {
   return Object.keys(PAGES).find(key => `#${PAGES[key].route}` === location.hash) || 'home';
 }
 
-const tools = (query, icon, escape) => `<div class="task-tools"><label class="search-box">${icon('search')}<input id="task-search" type="search" placeholder="搜索任务或具体要求" aria-label="搜索任务" value="${escape(query)}"></label><button class="button button-subtle" data-action="share-tasks">${icon('share')}<span>分享任务</span></button><button class="button button-subtle" data-action="export">${icon('calendar')}<span>${isNativeApp() ? '日历自动同步' : '导出日历'}</span></button></div>`;
+const tools = (query, icon, escape) => `<div class="task-tools"><label class="search-box">${icon('search')}<input id="task-search" type="search" placeholder="搜索任务或具体要求" aria-label="搜索任务" value="${escape(query)}"></label><button class="button button-subtle" data-action="share-tasks" aria-label="分享任务">${icon('share')}<span>分享任务</span></button><button class="button button-subtle" data-action="export" aria-label="${isNativeApp() ? '日历自动同步' : '导出日历'}">${icon('calendar')}<span>${isNativeApp() ? '日历自动同步' : '导出日历'}</span></button></div>`;
 const listPanel = (view, title, query, icon, escape) => `<section class="task-section glass ${view}-task-panel" aria-label="${title}"><div class="task-toolbar"><h2 class="list-title">${title}</h2>${tools(query, icon, escape)}</div><div id="task-list"></div></section>`;
 
 function homePage(state, counts, icon) {

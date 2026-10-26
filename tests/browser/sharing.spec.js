@@ -72,6 +72,9 @@ test('single and selected course task sharing preview uses native chooser only a
   for (const [width, height] of [[390, 844], [800, 1280]]) {
     await page.setViewportSize({ width, height });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.getByRole('button', { name: '分享任务', exact: true }).click();
+    await expect(page.locator('#share-preview')).toHaveValue(/英语阅读/);
+    await page.getByRole('button', { name: '关闭窗口', exact: true }).click();
     await page.getByRole('button', { name: '分享任务：物理练习', exact: true }).click();
     await expect(page.locator('#share-preview')).toHaveValue(/物理练习/);
     await expect(page.locator('#share-preview')).not.toHaveValue(/英语阅读/);
