@@ -132,7 +132,7 @@ export function extractDeadline(text, now = new Date()) {
   const normalized = normalizeDateNumbers(normalizeNotice(text));
   // A labelled end date takes precedence over a separately labelled start date.
   const labelled = normalized.match(/(?:提交截止(?:时间|日期)?|截止(?:时间|日期)|结束(?:时间|日期)|到期(?:时间|日期)|最迟提交时间|截止于|截至)[\s:：]*([^\n]+)/);
-  let compact = (labelled ? labelled[1] : normalized).replace(/[ \t]/g, '');
+  let compact = (labelled ? labelled[1] : normalized).replace(/(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})[ \t]+(?=\d{1,2}[:：])/g, '$1/').replace(/[ \t]/g, '');
   // Weekdays attached to an absolute date are annotations, not relative deadlines.
   compact = compact.replace(/((?:(?:\d{4})[年/.-])?\d{1,2}[月/.-]\d{1,2}(?:日|号)?(?:[/\s]*\d{1,2}[:：]\d{2})?)[/（(\s]*(?:星期|周)[一二三四五六日天1-7][)）]?/g, '$1');
   const relative = relativeDeadlines(compact, now);
@@ -164,16 +164,42 @@ function titleFromText(text) {
 
 export function extractTasks(raw, now = new Date()) {
   let text = normalizeNotice(raw);
-  text = text.replace(/([^\n])\s+(?=\d+[、.)]\s*\S)/g, '$1\n');
+  // A decimal file size such as 12.8 KB is not task number 12.
+  text = text.replace(/([^\n])\s+(?=\d+[、.)](?!\d)\s*\S)/g, '$1\n');
+  // Keep the Chinese message when WeChat displays its matching translation.
+  // Raw OCR remains available separately in the source panel for verification.
+  const translated = text.match(/@\s*所有人\s*\n([\s\S]+?)@\s*Everyone\b/i);
+  if (translated && /[a-z]{3,}/i.test(translated[1]) && !/[\p{Script=Han}]/u.test(translated[1].replace(/由微信提供翻译支持/g, ''))) text = text.replace(translated[0], '@所有人');
+  text = text.replace(/^.*由微信提供翻译支持.*$/gm, '');
   const lines = text.split('\n').map(s => s.trim()).filter(Boolean);
   if (!lines.length) return [];
+  // A file card followed by “这是第…次作业” describes one assignment.
+  // Join wrapped file names without treating the file and paper requirements as separate tasks.
+  const reference = lines.findIndex(line => /这是第.{1,8}(?:次|份)作业/.test(line));
+  if (reference > 0) {
+    const attachments = [];
+    for (let i = 0; i < reference; i++) {
+      if (!/^作业\s*[_＿\d]/.test(lines[i])) continue;
+      let name = lines[i];
+      for (let j = i + 1; j < Math.min(i + 4, reference) && !/\.(?:pdf|docx?)\b/i.test(name); j++) name += lines[j];
+      if (/\.(?:pdf|docx?)\b/i.test(name)) attachments.push(name.replace(/\s+/g, '').replace(/\.(?:pdf|docx?)\b.*$/i, ''));
+    }
+    if (attachments.length === 1) {
+      const end = lines.findIndex((line, index) => index >= reference && /^@\s*所有人/.test(line));
+      const body = lines.slice(reference, end >= 0 ? end : undefined);
+      if (!body.slice(1).some(line => /^(?:另[外一]|第[二三四五六七八九十\d].*(?:项|次)作业)/.test(line))) {
+        const details = [attachments[0], ...body].join('\n');
+        return [{ id: newId(), title: attachments[0].slice(0, 80), details, ...extractDeadline(details, now) }];
+      }
+    }
+  }
   const screenTitle = lines.find(l => /^.{1,80}(?:作业|测验|测试|练习|考试|习题|报告)$/.test(l) && !/[:：]/.test(l));
   if (screenTitle && /(?:开始|起始|开放)时间/.test(text) && /(?:截止|结束)时间/.test(text)) {
     const fields = lines.filter(l => l === screenTitle || /^(?:开始时间|起始时间|开放时间|截止时间|结束时间|考试限时|具体要求|要求[:：])/.test(l));
     const details = fields.join('\n');
     return [{ id: newId(), title: screenTitle, details, ...extractDeadline(details, now) }];
   }
-  const marker = /^(?:\d+[、.)]|[一二三四五六七八九十]+[、.]|[（(]\d+[）)])\s*\S/;
+  const marker = /^(?:\d+[、.)](?!\d)|[一二三四五六七八九十]+[、.]|[（(]\d+[）)])\s*\S/;
   const actionable = /作业|提交|完成|阅读|背诵|实验|报告|练习|预习|复习|论文|测验|考试|报名|汇报|打卡|习题|签到|收集|问卷/;
   const deadlineOnly = /^(?:截止|最迟|提交时间|时间|要求|注意|格式|字数|考试说明|考试限时|暂无说明|开始时间|结束时间|请于|请在|需于|于\d|\d{1,2}月\d{1,2}日.*(?:前|截止))/;
   const isDateContinuation = line => {

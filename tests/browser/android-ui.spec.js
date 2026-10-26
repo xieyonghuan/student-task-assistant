@@ -5,7 +5,7 @@ async function android(page) {
   await page.addInitScript(() => {
     window.ShikeNative = { postMessage(raw) {
       const { id } = JSON.parse(raw);
-      setTimeout(() => window.ShikeNative.onmessage?.({ data: JSON.stringify({ id, ok: true, result: { available: true, enabled: false, granted: false } }) }), 0);
+      setTimeout(() => window.ShikeNative.onmessage?.({ data: JSON.stringify({ id, ok: true, result: JSON.parse(raw).method === 'shareInbox' ? [] : { available: true, enabled: false, granted: false } }) }), 0);
     } };
   });
   await page.goto('./#/home');

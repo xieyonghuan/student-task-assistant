@@ -10,6 +10,7 @@ import { PAGES, readRoute, renderLearningPage } from './pages.js';
 import { newId, extractTasks, findDuplicates, sanitizeTask, validateTask, taskGroup, dueTimestamp, sortTasks, REMINDERS, localDate } from './domain.js';
 import { loadTasks, putTask, deleteTask, parseBackup, restoreTasks, loadDraft, putDraft, deleteDraft, putTaskWithDraft } from './storage.js';
 import { createImportFlow } from './import-flow.js';
+import { receiveSharedItem, formatSharedTasks } from './sharing.js';
 import { createCalendar } from './calendar.js';
 import { registerOffline, offlineStatus, prepareOffline } from './offline.js';
 import { isNativeApp, nativeCall } from './native.js';
@@ -36,6 +37,7 @@ const paths = {
   shield: '<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6z"/><path d="m8 12 3 3 5-6"/>',
   settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/>',
   download: '<path d="M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4"/>',
+  share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m9 11 6-4M9 13l6 4"/>',
   search: '<circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/>',
   arrow: '<path d="M4 12h16m-6-6 6 6-6 6"/>',
   close: '<path d="m6 6 12 12M6 18 18 6"/>',
@@ -89,7 +91,7 @@ function scrollPageToTop() {
   $('.native-content')?.scrollTo({ top: 0, behavior: 'instant' });
 }
 function render() {
-  if (isImportView(state.view) && !importSession) { if (!openingImport) startImport(); return; }
+  if (isImportView(state.view) && !importSession) { if (!openingImport && !receivingShare) startImport(); return; }
   if (state.view === 'review' && !importSession.canReview()) { history.replaceState(null, '', '#' + PAGES.capture.route); state.view = 'capture'; }
   const n = counts();
   const page = PAGES[state.view];
@@ -130,6 +132,10 @@ function render() {
     if (contentScroll != null) $('.native-content').scrollTop = contentScroll;
   }
   renderTaskList();
+  if (native && state.view === 'home') {
+    const button = document.createElement('button'); button.className = 'text-button'; button.dataset.action = 'receive-share';
+    button.textContent = '接收分享'; button.title = '继续处理系统分享的通知'; $('.home-followup').append(button);
+  }
   if (state.view === 'home' && (state.importDraft || state.manualDraft)) {
     const resume = $('.home-followup .text-button');
     resume.removeAttribute('data-view'); resume.dataset.action = 'resume-drafts';
@@ -145,7 +151,7 @@ function dueLabel(task) {
 }
 function taskCard(task) {
   const completed = !!task.completedAt;
-  return `<article class="task-card ${completed ? 'is-complete' : ''}"><button class="complete-button ${completed ? 'checked' : ''}" data-action="toggle" data-id="${esc(task.id)}" aria-label="${completed ? '恢复任务：' : '标为已完成：'}${esc(task.title)}">${completed ? icon('check') : ''}</button><button class="task-content" data-action="edit" data-id="${esc(task.id)}"><strong>${esc(task.title)}</strong>${task.details ? `<p>${esc(task.details)}</p>` : ''}<span class="due-label ${taskGroup(task) === 'overdue' ? 'is-overdue' : ''}">${icon(task.dueDate ? 'calendar' : 'inbox')}${esc(dueLabel(task))}</span></button><div class="task-card-actions"><button class="icon-button" data-action="edit" data-id="${esc(task.id)}" aria-label="编辑任务：${esc(task.title)}">${icon('edit')}</button><button class="icon-button danger-hover" data-action="delete" data-id="${esc(task.id)}" aria-label="删除任务：${esc(task.title)}">${icon('trash')}</button></div></article>`;
+  return `<article class="task-card ${completed ? 'is-complete' : ''}"><button class="complete-button ${completed ? 'checked' : ''}" data-action="toggle" data-id="${esc(task.id)}" aria-label="${completed ? '恢复任务：' : '标为已完成：'}${esc(task.title)}">${completed ? icon('check') : ''}</button><button class="task-content" data-action="edit" data-id="${esc(task.id)}"><strong>${esc(task.title)}</strong>${task.details ? `<p>${esc(task.details)}</p>` : ''}<span class="due-label ${taskGroup(task) === 'overdue' ? 'is-overdue' : ''}">${icon(task.dueDate ? 'calendar' : 'inbox')}${esc(dueLabel(task))}</span></button><div class="task-card-actions"><button class="icon-button" data-action="share-task" data-id="${esc(task.id)}" aria-label="分享任务：${esc(task.title)}">${icon('share')}</button><button class="icon-button" data-action="edit" data-id="${esc(task.id)}" aria-label="编辑任务：${esc(task.title)}">${icon('edit')}</button><button class="icon-button danger-hover" data-action="delete" data-id="${esc(task.id)}" aria-label="删除任务：${esc(task.title)}">${icon('trash')}</button></div></article>`;
 }
 function renderTaskList() {
   if (!$('#task-list')) return;
@@ -358,6 +364,66 @@ async function startImport(example = false, initialText = '', mode = 'image') {
   finally { openingImport = false; }
 }
 
+let shareReady = false, receivingShare = false, shareAgain = false;
+async function receiveInbox(manual = false) {
+  if (!isNativeApp() || !shareReady) return;
+  if (receivingShare) { shareAgain = true; return; }
+  if (openingImport) { setTimeout(() => receiveInbox(manual), 200); return; }
+  receivingShare = true;
+  let received = 0, error, shouldResume = false;
+  try {
+    const items = await nativeCall('shareInbox');
+    if (!Array.isArray(items)) throw new Error('分享队列暂时不可用，请稍后重试。');
+    if (!items.length) { if (manual) toast('没有待处理分享。在其他应用中选择文字或截图，点系统分享 → 拾课即可。'); return; }
+    shouldResume = true;
+    $('#app').inert = true;
+    await manualWrites;
+    $$('dialog[open]').forEach(dialog => dialog.close());
+    if (importSession) { pendingImportWrites = importSession.dispose(); importSession = undefined; }
+    await pendingImportWrites;
+    for (const item of items) {
+      const result = await receiveSharedItem(item);
+      if (!result.duplicate) received++;
+      await nativeCall('shareConsume', { id: item.id });
+    }
+  } catch (failure) { error = failure; }
+  finally {
+    if (shouldResume) {
+      state.importDraft = await loadDraft('import').catch(() => state.importDraft);
+      if (state.importDraft) await startImport(); else render();
+    }
+    receivingShare = false;
+    $('#app').inert = false;
+    if (shouldResume && !state.importDraft && isImportView(state.view)) { state.view = 'home'; history.replaceState(null, '', '#/home'); render(); }
+    if (error) toast('分享尚未全部处理：' + error.message, true);
+    else if (received) toast(`已接收 ${received} 次分享，请核对后保存任务。`);
+    if (shareAgain) { shareAgain = false; receiveInbox(); }
+  }
+}
+
+function shareTasks(id) {
+  const tasks = sortTasks(state.tasks.filter(task => id ? task.id === id : state.view === 'completed' ? !!task.completedAt : !task.completedAt && (state.view === 'all' || taskGroup(task) === state.view)));
+  if (!tasks.length) { toast('当前没有可分享的课程任务。'); return; }
+  const dialog = openDialog('分享课程任务', '选择任务并检查内容，再选择发送到哪个应用。', `<div class="share-task-options">${tasks.map(task => `<label class="export-task"><input type="checkbox" name="share-task" value="${esc(task.id)}" checked><span><strong>${esc(task.title)}</strong><small>${esc(dueLabel(task))}</small></span></label>`).join('')}</div><label class="field">分享内容<textarea id="share-preview" rows="8" readonly></textarea></label><p id="share-status" role="status"></p><div class="modal-actions"><button class="button button-light" id="copy-share">复制内容</button><button class="button button-primary" id="send-share">选择分享应用</button></div>`);
+  const preview = $('#share-preview', dialog), status = $('#share-status', dialog), send = $('#send-share', dialog), copy = $('#copy-share', dialog);
+  function update() {
+    try { preview.value = formatSharedTasks(tasks.filter(task => $$( '[name="share-task"]:checked', dialog).some(input => input.value === task.id))); status.textContent = ''; send.disabled = copy.disabled = false; }
+    catch (error) { preview.value = ''; status.textContent = error.message; send.disabled = copy.disabled = true; }
+  }
+  dialog.addEventListener('change', update); update();
+  copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(preview.value); status.textContent = '内容已复制，可粘贴发送。'; }
+    catch { preview.focus(); preview.select(); status.textContent = '请长按或使用系统复制，再粘贴发送。'; }
+  };
+  send.onclick = async () => {
+    try {
+      if (isNativeApp()) { await nativeCall('shareTasks', { text: preview.value }); status.textContent = '已打开系统分享面板。'; }
+      else if (navigator.share) { await navigator.share({ title: '拾课课程任务', text: preview.value }); status.textContent = '分享操作已结束。'; }
+      else { preview.focus(); preview.select(); status.textContent = '此浏览器没有系统分享，请复制内容后发送。'; }
+    } catch (error) { if (error.name !== 'AbortError') status.textContent = '分享未完成，可复制内容后发送。'; }
+  };
+}
+
 function download(content, type, filename) {
   if (isNativeApp()) {
     safely(async () => { await nativeCall('saveFile', { content, type, filename }); toast('文件已保存到你选择的位置'); });
@@ -476,6 +542,9 @@ document.addEventListener('click', event => {
     applySidebarState();
   }
   else if (action === 'import') startImport();
+  else if (action === 'receive-share') receiveInbox(true);
+  else if (action === 'share-task') shareTasks(id);
+  else if (action === 'share-tasks') shareTasks();
   else if (action === 'resume-drafts') openDialog('恢复未完成内容', '选择要继续的草稿，也可放弃不再需要的内容。', draftBanner());
   else if (action === 'resume-import') { button.closest('dialog')?.close(); startImport(); }
   else if (action === 'resume-manual') { button.closest('dialog')?.close(); editTask(undefined, true); }
@@ -528,6 +597,8 @@ async function start() {
   try { [state.tasks, state.importDraft, state.manualDraft] = await Promise.all([loadTasks(), loadDraft('import'), loadDraft('manual')]); }
   catch { state.storageError = true; }
   render();
+  shareReady = true;
+  if (!state.storageError) await receiveInbox();
   if (!state.storageError) await syncSavedTasks();
   try {
     await registerOffline();
@@ -537,6 +608,8 @@ async function start() {
   setInterval(() => { if (!document.hidden) refreshTimedViews(); }, 60000);
 }
 window.addEventListener('focus', refreshTimedViews);
+window.addEventListener('shike-share-ready', () => receiveInbox());
+window.addEventListener('focus', () => receiveInbox());
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshTimedViews(); });
 start();
 

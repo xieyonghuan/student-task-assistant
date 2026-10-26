@@ -208,17 +208,17 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
           if (!alive) return;
           if (!result.text.trim()) throw new Error('没有识别到文字，可重试或跳过这张截图。');
           source.text = result.text; source.status = 'done'; delete source.error;
-          model.tasks.push(...extractTasks(result.text, new Date(model.referenceTime)).map(task => ({ ...task, sourceId: source.id, selected: true })));
-          if (result.confidence < 65) source.warning = '部分文字不清楚，请核对日期和要求。';
+          model.tasks.push(...extractTasks(result.text, new Date(source.referenceTime || model.referenceTime)).map(task => ({ ...task, sourceId: source.id, selected: true })));
+          if (Number.isFinite(result.confidence) && result.confidence < 65) source.warning = '部分文字不清楚，请核对日期和要求。';
         } catch (error) {
           if (!alive) return;
           source.status = 'failed'; source.error = error.message;
         }
-        model.text = raw.value = model.sources.filter(source => source.status === 'done').map(source => source.text).join('\n\n');
+        model.text = raw.value = [model.extraText, ...model.sources.filter(source => source.status === 'done').map(source => source.text)].filter(Boolean).join('\n\n');
         await persist(true);
       }
       if (!alive) return;
-      model.overview = model.sources.length > 1;
+      model.overview = model.sources.length > 1 || (!!model.extraText && model.tasks.length > 1);
       if (model.tasks.length) { await persist(true); showDraft(); }
       else { panel.innerHTML = `<div class="review-placeholder import-error"><h3>这次没有识别完成</h3>${failures()}<p>可返回修改原文，粘贴通知文字后继续提取。</p></div>`; bindFailures(); }
     } catch (error) {
@@ -242,7 +242,7 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
     if (hasImportDraft(model) && !window.confirm('更换截图会替换尚未保存的草稿，已保存的任务不受影响。继续吗？')) return;
     const sources = files.map(file => ({ id: newId(), name: file.name, status: 'pending', text: '' }));
     completed = false;
-    Object.assign(model, { text: '', tasks: [], sources, saved: 0, skipped: 0, overview: files.length > 1, stage: 'review', referenceTime: new Date().toISOString() }); raw.value = '';
+    Object.assign(model, { text: '', extraText: '', tasks: [], sources, saved: 0, skipped: 0, overview: files.length > 1, stage: 'review', referenceTime: new Date().toISOString() }); raw.value = '';
     try {
       await serial(() => replaceImportDraft(snapshot(), files.map((blob, index) => ({ id: sources[index].id, blob }))));
       ui.onDraft(snapshot()); filesList(); runQueue();

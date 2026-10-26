@@ -1,4 +1,15 @@
 /* Keep the same reading and input order on desktop, tablet and phone. */
+.task-tools { flex-wrap: wrap; }
+.task-tools .search-box { flex: 1 1 200px; }
+.share-task-options { max-height: 32dvh; overflow-y: auto; margin-bottom: 16px; }
+#share-preview { white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-card-actions { flex-wrap: wrap; }
+@media (max-width: 650px) {
+  .task-tools .search-box { flex-basis: 100%; }
+  .task-tools .button { flex: 1 1 auto; }
+  .native-app .home-followup:has([data-action="receive-share"]) { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .native-app .home-followup [data-action="receive-share"] { width: auto; flex: 1; }
+}
 .home-methods { grid-template-columns: minmax(0, 1fr); }
 .entry-method { min-height: 0; }
 @media (min-width: 651px) {

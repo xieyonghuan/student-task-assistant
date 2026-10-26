@@ -1,6 +1,7 @@
 import { createWorker, PSM } from 'tesseract.js';
 import { appURL } from './offline.js';
 import { validDate, normalizeNotice } from './domain.js';
+import { isNativeApp, nativeCall } from './native.js';
 
 let activeJob;
 let idleSession;
@@ -121,6 +122,27 @@ async function imageCanvas(file) {
   return compactBlankRows(canvas, ink);
 }
 
+async function recognizeNative(file, job) {
+  job.onProgress('正在使用本机中文识别', 0.15);
+  const bitmap = await createImageBitmap(file);
+  if (!bitmap.width || !bitmap.height || bitmap.width * bitmap.height > 80000000) {
+    bitmap.close(); throw new Error('图片尺寸过大，请裁剪为课程通知部分后再试。');
+  }
+  const scale = Math.min(1, 3200 / Math.max(bitmap.width, bitmap.height), 1800 / bitmap.width);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+  const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
+  let content;
+  try { content = canvas.toDataURL('image/jpeg', 0.93).split(',')[1]; }
+  finally { canvas.width = canvas.height = 1; }
+  if (job.cancelled) throw cancelledError();
+  const result = await nativeCall('recognizeImage', { content });
+  if (job.cancelled) throw cancelledError();
+  if (!result.text?.trim()) throw new Error('本机识别未找到文字。');
+  return { ...result, text: normalizeNotice(result.text) };
+}
+
 async function refineDateLines(worker, canvas, data, job, onProgress) {
   const lines = (data.blocks || []).flatMap(b => b.paragraphs.flatMap(p => p.lines));
   const targets = lines.filter(l => /截止|截至|开始|结束|到期|提交|deadline/i.test(l.text.replace(/\s/g, '')) && /\d{4}[-/.]\d/.test(l.text)).slice(0, 12);
@@ -165,6 +187,13 @@ export async function recognizeImage(file, onProgress = () => {}) {
   let timer;
   let succeeded = false;
   const work = async () => {
+    if (isNativeApp()) {
+      try { return await recognizeNative(file, job); }
+      catch (error) {
+        if (job.cancelled) throw error;
+        onProgress('正在切换备用离线识别', 0.1);
+      }
+    }
     // Overlap engine loading with image decoding and pixel preparation.
     const [canvas, worker] = await Promise.all([
       imageCanvas(file).then(canvas => {

@@ -53,6 +53,37 @@ export const replaceImportDraft = (draft, files) => transaction('readwrite', (st
   for (const file of files) images.put(file);
   store.put(draft);
 }, ['drafts', 'draft-files']);
+export async function appendSharedDraft(shareId, incoming, files) {
+  const db = await database();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['drafts', 'draft-files'], 'readwrite', { durability: 'strict' });
+    const drafts = tx.objectStore('drafts'); let draft, receipt, error, duplicate = false;
+    const a = drafts.get('import'), b = drafts.get('share-receipts');
+    const c = tx.objectStore('draft-files').getAll(); let existingBytes = 0;
+    let ready = 0;
+    function commit() {
+      if (++ready !== 3) return;
+      receipt ||= { id: 'share-receipts', ids: [] };
+      if (receipt.ids.includes(shareId)) { duplicate = true; return; }
+      draft ||= { id: 'import', text: '', tasks: [], sources: [], saved: 0, skipped: 0, mode: 'image', referenceTime: incoming.referenceTime };
+      if (draft.sources.length + incoming.sources.length > 20 || draft.text.length + incoming.text.length > 100000 || draft.tasks.length + incoming.tasks.length > 500 || existingBytes + files.reduce((sum, file) => sum + file.blob.size, 0) > 100 * 1024 * 1024) {
+        error = new Error('当前草稿较多，请先完成或放弃这批通知，再从首页“接收分享”继续。分享仍在本机保留。'); tx.abort(); return;
+      }
+      const sourceText = draft.sources.filter(source => source.status === 'done').map(source => source.text).join('\n\n');
+      if (draft.extraText === undefined || draft.text !== [draft.extraText, sourceText].filter(Boolean).join('\n\n')) draft.extraText = draft.text === sourceText ? '' : draft.text;
+      draft.extraText = [draft.extraText, incoming.text].filter(Boolean).join('\n\n');
+      draft.text = [draft.text, incoming.text].filter(Boolean).join('\n\n');
+      draft.sources.push(...incoming.sources); draft.tasks.push(...incoming.tasks);
+      draft.stage = 'review'; draft.overview = draft.sources.length > 1 || draft.tasks.length > 1; draft.updatedAt = new Date().toISOString();
+      for (const file of files) tx.objectStore('draft-files').put(file);
+      drafts.put(draft); receipt.ids.push(shareId); receipt.ids = receipt.ids.slice(-1024); drafts.put(receipt);
+    }
+    a.onsuccess = () => { draft = a.result; commit(); }; b.onsuccess = () => { receipt = b.result; commit(); };
+    c.onsuccess = () => { existingBytes = c.result.reduce((sum, file) => sum + file.blob.size, 0); commit(); };
+    tx.oncomplete = () => resolve({ draft, duplicate });
+    tx.onerror = tx.onabort = () => reject(error || tx.error || new Error('分享草稿保存失败，请检查本机空间。'));
+  });
+}
 // Saving the task and consuming its draft commit together, including on shutdown.
 export const putTaskWithDraft = (task, id, nextDraft) => transaction('readwrite', (store, tx) => {
   store.put(task);

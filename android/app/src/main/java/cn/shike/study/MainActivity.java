@@ -42,6 +42,7 @@ public final class MainActivity extends Activity {
     static final StringBuilder debugRequests = new StringBuilder();
     private WebView web;
     private CalendarStore calendar;
+    private NativeOcr ocr;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private Reply calendarPermissionReply, saveReply;
     private String saveContent;
@@ -89,7 +90,7 @@ public final class MainActivity extends Activity {
         WebViewAssetLoader loader = new WebViewAssetLoader.Builder().addPathHandler("/assets/", asset -> {
             if(BuildConfig.DEBUG) synchronized(debugRequests) { if(debugRequests.length()<10000)debugRequests.append(asset).append('\n'); }
             return assets.handle(asset.endsWith(".gz") ? asset+".bin" : asset);
-        }).build();
+        }).addPathHandler("/shared/", new WebViewAssetLoader.InternalStoragePathHandler(this, ShareStore.root(this))).build();
         web.setWebViewClient(new WebViewClientCompat() {
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 if ("data".equals(request.getUrl().getScheme()) || "blob".equals(request.getUrl().getScheme())) return null;
@@ -170,6 +171,13 @@ public final class MainActivity extends Activity {
     }
     private void dispatch(String method, JSONObject args, Reply reply) throws Exception {
         switch (method) {
+            case "shareInbox": background(reply, () -> ShareStore.pending(this)); break;
+            case "shareConsume": background(reply, () -> { ShareStore.consume(this, args.getString("id")); return true; }); break;
+            case "shareTasks": startActivity(Intent.createChooser(ShareStore.outgoing(args.getString("text")), "分享课程任务")); reply.send(true, null); break;
+            case "recognizeImage": background(reply, () -> {
+                if (ocr == null) ocr = new NativeOcr();
+                return ocr.recognize(args.getString("content"));
+            }); break;
             case "calendarStatus": background(reply, () -> calendar.status()); break;
             case "calendarSync": background(reply, () -> calendar.sync(args == null ? null : args.optJSONArray("tasks"))); break;
             case "calendarDisable": background(reply, () -> calendar.disable()); break;
@@ -227,11 +235,15 @@ public final class MainActivity extends Activity {
         return files.isEmpty() ? null : files.toArray(new Uri[0]);
     }
     @Override protected void onSaveInstanceState(Bundle state) { super.onSaveInstanceState(state); if (web != null) web.saveState(state); }
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent); setIntent(intent);
+        if (web != null) web.evaluateJavascript("window.dispatchEvent(new Event('shike-share-ready'))", null);
+    }
     WebView browserForTests() { return web; }
     @Override public void onBackPressed() {
         web.evaluateJavascript("(() => { const d=document.querySelector('dialog[open]'); if(d){d.close();return true;} return false; })()", closed -> {
             if (!"true".equals(closed)) { if (web.canGoBack()) web.goBack(); else moveTaskToBack(true); }
         });
     }
-    @Override protected void onDestroy() { if (web != null) web.destroy(); worker.shutdown(); super.onDestroy(); }
+    @Override protected void onDestroy() { if (web != null) web.destroy(); worker.execute(() -> { if (ocr != null) ocr.close(); }); worker.shutdown(); super.onDestroy(); }
 }

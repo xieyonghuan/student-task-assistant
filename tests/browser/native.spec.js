@@ -7,6 +7,7 @@ async function nativeApp(page) {
     window.ShikeNative = { postMessage(raw) {
       const message = JSON.parse(raw); window.__nativeCalls.push(message);
       let result = window.__calendar, error;
+      if (message.method === 'shareInbox') result = [];
       if (message.method === 'calendarEnable') {
         if (window.__denyCalendar) error = '日历权限未允许';
         else { window.__calendar.enabled = true; window.__calendar.granted = true; }
