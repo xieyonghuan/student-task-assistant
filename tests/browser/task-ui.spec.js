@@ -5,9 +5,12 @@ test('voice appears above manual entry on desktop, tablet and phone', async ({ p
   await page.goto('./#/home');
   for (const [width, height] of [[1440, 1000], [800, 1280], [390, 844]]) {
     await page.setViewportSize({ width, height });
-    const voice = await page.locator('.voice-entry').boundingBox();
-    const manual = await page.locator('.manual-entry').boundingBox();
-    expect(manual.y).toBeGreaterThanOrEqual(voice.y + voice.height);
+    await expect.poll(() => page.evaluate(() => {
+      const voice = document.querySelector('.voice-entry');
+      const manual = document.querySelector('.manual-entry');
+      if (!voice || !manual) return false;
+      return manual.getBoundingClientRect().top >= voice.getBoundingClientRect().bottom;
+    })).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
 });
