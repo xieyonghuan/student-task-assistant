@@ -73,6 +73,7 @@ export async function appendSharedDraft(shareId, incoming, files) {
       if (draft.extraText === undefined || draft.text !== [draft.extraText, sourceText].filter(Boolean).join('\n\n')) draft.extraText = draft.text === sourceText ? '' : draft.text;
       draft.extraText = [draft.extraText, incoming.text].filter(Boolean).join('\n\n');
       draft.text = [draft.text, incoming.text].filter(Boolean).join('\n\n');
+      draft.recentSourceIds = [...incoming.sources.map(source => source.id), ...incoming.tasks.map(task => task.sourceId)].filter(Boolean);
       draft.sources.push(...incoming.sources); draft.tasks.push(...incoming.tasks);
       draft.stage = 'review'; draft.overview = draft.sources.length > 1 || draft.tasks.length > 1; draft.updatedAt = new Date().toISOString();
       for (const file of files) tx.objectStore('draft-files').put(file);

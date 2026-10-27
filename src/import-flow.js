@@ -121,13 +121,17 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
   function sourceName(task) { return model.sources.find(source => source.id === task.sourceId)?.name || '通知文字'; }
   function overview() {
     releaseImages();
+    const recent = new Set(model.recentSourceIds || []);
+    const currentCount = model.tasks.filter(task => recent.has(task.sourceId)).length;
+    const previousCount = model.tasks.length - currentCount;
+    const originSummary = recent.size && previousCount ? `<p class="notice" id="draft-origin-summary">本次导入 ${currentCount} 项 · 上次草稿 ${previousCount} 项。下方合计 ${model.tasks.length} 项，包含上次尚未保存的内容。</p>` : '';
     const items = model.tasks.map(task => {
       const matches = batchDuplicates(task, model.tasks);
       const source = model.sources.find(source => source.id === task.sourceId);
       const hint = [task.dateHint, source?.warning].filter(Boolean).join(' ');
-      return `<article class="batch-task" data-id="${esc(task.id)}"><label class="batch-select"><input type="checkbox" name="selected" ${task.selected === false ? '' : 'checked'}> 保存这项任务 <small>来自 ${esc(sourceName(task))}</small></label>${matches.length ? `<p class="notice warning">可能与 ${esc(matches.map(sourceName).join('、'))} 中的作业重复。请取消不需要的项；日期不同的任务也请核对。</p>` : ''}${hint ? `<p class="notice warning">${esc(hint)}</p>` : ''}${source ? `<details class="source-reference" data-source="${esc(source.id)}"><summary>查看原文与截图</summary><pre>${esc(source.text)}</pre><img alt="导入的课程通知截图" hidden></details>` : ''}<form>${taskFields(task, 'batch-' + task.id + '-')}<label class="field undated-choice"><span><input type="checkbox" name="undated" ${task.dateConfirmed && !task.dueDate ? 'checked' : ''}> 暂无截止日期</span></label></form></article>`;
+      return `<article class="batch-task" data-id="${esc(task.id)}"><label class="batch-select"><input type="checkbox" name="selected" ${task.selected === false ? '' : 'checked'}> 保存这项任务 <small>${recent.size ? (recent.has(task.sourceId) ? '本次导入 · ' : '上次草稿 · ') : ''}来自 ${esc(sourceName(task))}</small></label>${matches.length ? `<p class="notice warning">可能与 ${esc(matches.map(sourceName).join('、'))} 中的作业重复。请取消不需要的项；日期不同的任务也请核对。</p>` : ''}${hint ? `<p class="notice warning">${esc(hint)}</p>` : ''}${source ? `<details class="source-reference" data-source="${esc(source.id)}"><summary>查看原文与截图</summary><pre>${esc(source.text)}</pre><img alt="导入的课程通知截图" hidden></details>` : ''}<form>${taskFields(task, 'batch-' + task.id + '-')}<label class="field undated-choice"><span><input type="checkbox" name="undated" ${task.dateConfirmed && !task.dueDate ? 'checked' : ''}> 暂无截止日期</span></label></form></article>`;
     }).join('');
-    panel.innerHTML = `<div class="review-heading"><span class="feature-label">${icon('check')} 汇总确认</span><strong>待确认 ${model.tasks.length} 项任务 · ${model.sources.length} 张截图</strong></div><p class="review-tip">核对名称、日期和要求；疑似重复的作业可取消勾选，全部核对后统一保存。</p>${failures()}<div class="batch-tasks">${items}</div><p class="form-error" id="batch-error" role="alert"></p><button class="button button-primary" id="save-batch">确认并保存所选任务</button>`;
+    panel.innerHTML = `<div class="review-heading"><span class="feature-label">${icon('check')} 汇总确认</span><strong>待确认 ${model.tasks.length} 项任务 · ${model.sources.length} 张截图</strong></div>${originSummary}<p class="review-tip">核对名称、日期和要求；疑似重复的作业可取消勾选，全部核对后统一保存。</p>${failures()}<div class="batch-tasks">${items}</div><p class="form-error" id="batch-error" role="alert"></p><button class="button button-primary" id="save-batch">确认并保存所选任务</button>`;
     panel.oninput = event => {
       const card = event.target.closest('.batch-task');
       if (card && event.target.name === 'undated' && event.target.checked) {
@@ -267,7 +271,7 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
     const sources = files.map(file => ({ id: newId(), name: file.name, status: 'pending', text: '' }));
     completed = false;
     updateReference();
-    Object.assign(model, { text: '', extraText: '', tasks: [], sources, saved: 0, skipped: 0, overview: files.length > 1, stage: 'review' }); raw.value = '';
+    Object.assign(model, { text: '', extraText: '', tasks: [], sources, recentSourceIds: [], saved: 0, skipped: 0, overview: files.length > 1, stage: 'review' }); raw.value = '';
     try {
       await serial(() => replaceImportDraft(snapshot(), files.map((blob, index) => ({ id: sources[index].id, blob }))));
       ui.onDraft(snapshot()); filesList(); runQueue();
@@ -280,6 +284,7 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
     if (!model.text.trim()) { ui.toast('请先上传截图或粘贴通知文字。', true); return; }
     updateReference();
     model.tasks = extractTasks(model.text, new Date(model.referenceTime)).map(task => ({ ...task, selected: true }));
+    model.recentSourceIds = [];
     completed = false;
     for (const source of model.sources) if (source.status === 'failed') source.status = 'skipped';
     model.saved = model.skipped = 0;

@@ -30,6 +30,22 @@ async function seed(page, records) {
 }
 const share = (id, text, images = []) => ({ id, text, images, receivedAt: Date.parse('2026-10-26T12:00:00+08:00') });
 
+test('pasting two tasks over five unsaved tasks distinguishes new results from the preserved draft after reload', async ({ page }) => {
+  await app(page);
+  await seed(page,[['drafts',{id:'import',text:'旧通知',tasks:Array.from({length:5},(_,i)=>({id:'previous-'+i,title:'原有草稿'+i,details:'保留内容',selected:true})),sources:[],saved:0,skipped:0,stage:'review',accuracy:'fast'}]]);
+  await page.evaluate(()=>{window.__clipboardText='拾课课程任务\n1. 数学报告\n截止时间：2026-12-30\n要求：写出步骤\n2. 英语阅读\n截止时间：2027-01-04\n要求：阅读章节';});
+  await page.getByRole('button',{name:'接收 / 粘贴通知',exact:true}).click();
+  await expect(page.locator('.batch-task')).toHaveCount(7);
+  await expect(page.locator('#draft-origin-summary')).toContainText('本次导入 2 项 · 上次草稿 5 项');
+  await expect(page.locator('.batch-select small').filter({hasText:'本次导入'})).toHaveCount(2);
+  await expect(page.locator('.batch-select small').filter({hasText:'上次草稿'})).toHaveCount(5);
+  await expect(page.locator('#ocr-accuracy')).toHaveValue('stable');
+  await page.reload();
+  await expect(page.locator('#draft-origin-summary')).toContainText('本次导入 2 项 · 上次草稿 5 项');
+  await expect(page.locator('.batch-task [name=title]').first()).toHaveValue('原有草稿0');
+  await expect(page.locator('.batch-task [name=details]').first()).toHaveValue('保留内容');
+});
+
 test('incoming share preserves existing import/manual drafts and durable receipt prevents duplicates after ack failure', async ({ page }) => {
   await app(page);
   await seed(page, [['drafts', { id: 'manual', task: { title: '尚未完成的手动任务' }, updatedAt: new Date().toISOString() }], ['drafts', { id: 'import', text: '完成化学习题', tasks: [{ id: 'old-task', title: '完成化学习题', details: '', dueDate: '', selected: true }], sources: [], saved: 0, skipped: 0, stage: 'review' }]]);
