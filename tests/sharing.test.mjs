@@ -11,6 +11,7 @@ test('shared text keeps two tasks through Markdown breaks, escaped newlines and 
     assert.deepEqual(tasks.map(t=>[t.dueDate,t.dueTime]),[['2026-12-30','23:59'],['2027-01-04','']]);
     assert.match(tasks[1].details,/简介.pdf/);
   }
+  assert.equal(extractTasks(formatSharedTasks([{title:'区间练习',dueDate:'2026-12-30',details:'计算区间 [1,2]'}]))[0].details,'计算区间 [1,2]');
 });
 
 test('shared text retains every task when the first requirements contain exam times', () => {

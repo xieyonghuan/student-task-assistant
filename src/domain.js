@@ -186,8 +186,9 @@ function sharedTaskBlocks(text, now) {
   if (branded) {
     // Chat apps may copy Markdown hard breaks or flatten a whole card into one
     // paragraph. Restore structural boundaries before the generic task splitter.
-    text = text.trim().replace(/^\[(?=拾)/, '').replace(/\]$/, '')
-      .replace(/\\r\\n|\\n/g, '\n').replace(/\\(?=[ \t]*(?:\n|$))/g, '')
+    text = text.trim();
+    if (/^\[拾/.test(text) && text.endsWith(']')) text = text.slice(1, -1);
+    text = text.replace(/\\r\\n|\\n/g, '\n').replace(/\\(?=[ \t]*(?:\n|$))/g, '')
       .replace(/\\[ \t]+/g, '\n').replace(/\\([_*])/g, '$1')
       .replace(/\s+(?=\d{1,3}\s*[.、)]\s*(?!\d)\S)/g, '\n')
       .replace(/\s+(?=(?:课程|科目|截止时间|截止日期|要求)\s*[:：])/g, '\n');
