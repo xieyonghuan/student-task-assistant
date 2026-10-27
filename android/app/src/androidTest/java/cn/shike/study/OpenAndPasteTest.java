@@ -60,12 +60,34 @@ public class OpenAndPasteTest {
         try {
             activity=(MainActivity)InstrumentationRegistry.getInstrumentation().startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             waitFor("!!document.querySelector('.home-capture')");
+            eval("document.querySelector('[data-action=import]').click()");
+            waitFor("!!document.querySelector('#ocr-accuracy')");
+            eval("(()=>{const select=document.querySelector('#ocr-accuracy');select.value='stable';select.dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('[data-action=exit-import]').click();})()");
+            waitFor("!!document.querySelector('.home-capture')");
+            eval("window.__stableWorkers=0;(()=>{const W=window.Worker;window.Worker=class extends W{constructor(...args){super(...args);if(String(args[0]).includes('/ocr/'))window.__stableWorkers++}}})()");
             Intent open=new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse("content://cn.shike.study.test.images/card"),"application/octet-stream").setClass(context,ShareReceiverActivity.class).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->activity.startActivity(open));
             waitFor("[...document.querySelectorAll('[name=title]')].some(e=>e.value==='第三章练习') && [...document.querySelectorAll('[name=title]')].some(e=>e.value==='概率报告')");
             assertEquals("1",eval("[...document.querySelectorAll('[name=title]')].filter(e=>e.value==='第三章练习').length"));
             assertEquals("1",eval("[...document.querySelectorAll('[name=title]')].filter(e=>e.value==='概率报告').length"));
             assertEquals("true",eval("[...document.querySelectorAll('[name=title]')].filter(e=>['第三章练习','概率报告'].includes(e.value)).every(e=>e.form.querySelector('[name=dueDate]').value===(e.value==='第三章练习'?'2026-12-30':'2027-01-04'))"));
+            assertEquals("true",eval("window.__stableWorkers>0"));
+        } finally { if(activity!=null)InstrumentationRegistry.getInstrumentation().runOnMainSync(()->activity.finish()); }
+    }
+
+    @Test public void pastedSharedTasksWithMarkdownBreaksKeepBothOuterDeadlines() throws Exception {
+        Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        try {
+            activity=(MainActivity)InstrumentationRegistry.getInstrumentation().startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            waitFor("!!document.querySelector('.home-capture')");
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->activity.browserForTests().requestFocus());
+            waitFor("document.hasFocus()");
+            String text="[拾课课程任务\n1. 线性代数报告\\\n 截止时间：2026-12-30 23:59\\\n 要求：开始时间：2026-12-01\\\n 截止时间：2026-12-30\n2. 英语阅读\\\n 截止时间：2027-01-04（当天 00:00）\\\n 要求：100.9 KB\\\n 下周一交作业]";
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->((ClipboardManager)context.getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("test",text)));
+            eval("document.querySelector('[data-action=receive-share]').click()");
+            waitFor("[...document.querySelectorAll('[name=title]')].some(e=>e.value==='线性代数报告') && [...document.querySelectorAll('[name=title]')].some(e=>e.value==='英语阅读')");
+            assertEquals("true",eval("['线性代数报告','英语阅读'].every(title=>[...document.querySelectorAll('[name=title]')].filter(e=>e.value===title).length===1)"));
+            assertEquals("true",eval("[...document.querySelectorAll('[name=title]')].filter(e=>['线性代数报告','英语阅读'].includes(e.value)).every(e=>e.form.querySelector('[name=dueDate]').value===(e.value==='线性代数报告'?'2026-12-30':'2027-01-04'))"));
         } finally { if(activity!=null)InstrumentationRegistry.getInstrumentation().runOnMainSync(()->activity.finish()); }
     }
 }

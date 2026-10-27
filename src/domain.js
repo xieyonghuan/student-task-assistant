@@ -182,6 +182,16 @@ export function extractCourse(raw) {
 // Shared cards contain complete tasks, including old notices inside “要求”.
 // Read their outer fields before applying heuristics for a single exam screenshot.
 function sharedTaskBlocks(text, now) {
+  const branded = /拾\s*课\s*[·・.。]?\s*课程任务/.test(text);
+  if (branded) {
+    // Chat apps may copy Markdown hard breaks or flatten a whole card into one
+    // paragraph. Restore structural boundaries before the generic task splitter.
+    text = text.trim().replace(/^\[(?=拾)/, '').replace(/\]$/, '')
+      .replace(/\\r\\n|\\n/g, '\n').replace(/\\(?=[ \t]*(?:\n|$))/g, '')
+      .replace(/\\[ \t]+/g, '\n').replace(/\\([_*])/g, '$1')
+      .replace(/\s+(?=\d{1,3}\s*[.、)]\s*(?!\d)\S)/g, '\n')
+      .replace(/\s+(?=(?:课程|科目|截止时间|截止日期|要求)\s*[:：])/g, '\n');
+  }
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
   const heading = /^\d{1,3}\s*[.、)]\s*(?!\d)(\S.*)$/;
   const deadline = /^(?:截止时间|截止日期)\s*[:：]\s*(.*)$/;
@@ -192,7 +202,6 @@ function sharedTaskBlocks(text, now) {
     const requirements = fields.findIndex(line => /^要求\s*[:：]/.test(line));
     return fields.slice(0, requirements < 0 ? undefined : requirements).some(line => deadline.test(line) || /^暂无截止日期$/.test(line));
   });
-  const branded = /拾\s*课\s*[·・.。]?\s*课程任务/.test(text);
   // A damaged or cropped banner is recoverable only when every numbered
   // entry has a canonical outer deadline, rather than an ordinary notice.
   const structured = starts.length >= 2 && starts.length === candidates.length && starts.every((start, index) =>

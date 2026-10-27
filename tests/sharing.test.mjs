@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import { extractTasks, extractCourse, extractDeadline, normalizeNotice } from '../src/domain.js';
 import { formatSharedTasks } from '../src/sharing.js';
 
+test('shared text keeps two tasks through Markdown breaks, escaped newlines and flattened chat copies', () => {
+  const text='[拾课课程任务\n1. 第四章作业\\\n   截止时间：2026-12-30 23:59\\\n   要求：第四章作业\\\n   开始时间：2026-12-01/11:09\\\n   截止时间：2026-12-30/23:59\\\n   考试限时：不限时\n2. 统计报告\\\n   截止时间：2027-01-04（当天 00:00）\\\n   要求：100.9 KB\\\n   这是第一次作业，下周一交\\\n   BR: 作业 \\_1. 统计学\\\n   简介.pdf]';
+  for (const input of [text,text.replace(/\n/g,' '),text.replace(/\n/g,'\\n')]) {
+    const tasks=extractTasks(input);assert.equal(tasks.length,2);
+    assert.deepEqual(tasks.map(t=>t.title),['第四章作业','统计报告']);
+    assert.deepEqual(tasks.map(t=>[t.dueDate,t.dueTime]),[['2026-12-30','23:59'],['2027-01-04','']]);
+    assert.match(tasks[1].details,/简介.pdf/);
+  }
+});
+
 test('shared text retains every task when the first requirements contain exam times', () => {
   const tasks = [{ title: '第四章作业', dueDate: '2026-12-30', dueTime: '23:59', details: '第四章作业\n开始时间：2026-12-01/11:09/星期二\n截止时间：2026-12-30/23:59/星期三\n考试限时：不限时' },
     { title: '统计学', course: '统计学', dueDate: '2027-01-04', details: '这是第一次作业\n下周一收齐\n使用完整 A4 纸\n@所有人\nThis is the first assignment.\n@Everyone' }];

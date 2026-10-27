@@ -203,7 +203,7 @@ async function refineDateLines(worker, canvas, data, job, onProgress) {
   return text;
 }
 
-export async function recognizeImage(file, onProgress = () => {}, { accuracy = 'fast' } = {}) {
+export async function recognizeImage(file, onProgress = () => {}, { accuracy = 'stable' } = {}) {
   cancelOCR();
   const job = { cancelled: false, session: null, canvas: null, rejectCancel: null, onProgress };
   activeJob = job;
@@ -211,7 +211,7 @@ export async function recognizeImage(file, onProgress = () => {}, { accuracy = '
   let timer;
   let succeeded = false;
   const work = async () => {
-    if (isNativeApp()) {
+    if (isNativeApp() && (accuracy === 'fast' || accuracy === 'accurate')) {
       try { return await recognizeNative(file, job, accuracy); }
       catch (error) {
         if (job.cancelled) throw error;
@@ -231,7 +231,7 @@ export async function recognizeImage(file, onProgress = () => {}, { accuracy = '
     await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT, preserve_interword_spaces: '0', tessedit_char_whitelist: '' });
     const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true });
     const text = await refineDateLines(worker, canvas, data, job, onProgress);
-    return { text: normalizeNotice(text), confidence: data.confidence };
+    return { text: normalizeNotice(text), confidence: data.confidence, engine: 'local-stable' };
   };
   try {
     const result = await Promise.race([work(), cancellation, new Promise((_, reject) => { timer = setTimeout(() => { job.cancelled = true; reject(new Error('识别用时较长，请裁剪截图后重试，或直接粘贴通知文字。')); }, 180000); })]);

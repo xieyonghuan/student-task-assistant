@@ -44,14 +44,16 @@ test('incoming share preserves existing import/manual drafts and durable receipt
   await page.reload(); await expect(page.locator('.batch-task')).toHaveCount(2);
 });
 
-test('text and multiple shared images enter sequential native OCR and preserve text source through refresh', async ({ page }) => {
+test('text and multiple shared images use stable OCR by default and preserve text source through refresh', async ({ page }) => {
   await app(page);
   const urls = ['/shared/22222222-2222-4222-8222-222222222222/1.img', '/shared/22222222-2222-4222-8222-222222222222/2.img'];
-  const png = Buffer.from(await page.evaluate(() => { const c = document.createElement('canvas'); c.width = c.height = 100; const x = c.getContext('2d'); x.fillStyle = 'white'; x.fillRect(0, 0, 100, 100); return c.toDataURL().split(',')[1]; }), 'base64');
+  const png = Buffer.from(await page.evaluate(() => { const c = document.createElement('canvas'); c.width=1200;c.height=350; const x = c.getContext('2d'); x.fillStyle = 'white'; x.fillRect(0, 0, c.width, c.height);x.fillStyle='#111';x.font='48px sans-serif';x.fillText('完成物理练习',40,90);x.fillText('截止时间：2026年12月15日',40,190); return c.toDataURL().split(',')[1]; }), 'base64');
   for (const url of urls) await page.route('**' + url, route => route.fulfill({ contentType: 'image/png', body: png }));
   await deliver(page, share('22222222-2222-4222-8222-222222222222', '完成英语阅读', urls.map((url, i) => ({ url: new URL(url, 'http://127.0.0.1:4173').href, name: `通知${i + 1}.png`, type: 'image/png' }))));
   await expect(page.locator('.batch-task')).toHaveCount(3);
-  expect(await page.evaluate(() => window.__calls.filter(c => c.method === 'recognizeImage').length)).toBe(2);
+  await expect(page.locator('#ocr-accuracy')).toHaveValue('stable');
+  expect(await page.evaluate(() => window.__calls.filter(c => c.method === 'recognizeImage').length)).toBe(0);
+  await expect(page.locator('.batch-task [name=title]').nth(1)).toHaveValue('完成物理练习');
   await expect(page.locator('#notification-text')).toHaveValue(/完成英语阅读/);
   await expect(page.locator('.batch-task').nth(1)).toContainText('重复');
   await page.reload(); await expect(page.locator('.batch-task')).toHaveCount(3);
@@ -168,6 +170,7 @@ for (const mode of ['clipboard', 'image']) test(`shared card via ${mode} keeps t
   if(mode==='clipboard') await page.getByRole('button',{name:'接收 / 粘贴通知',exact:true}).click();
   else {
     await page.getByRole('button',{name:/识别课程截图/}).click();
+    await page.locator('#ocr-accuracy').selectOption('fast');
     await page.locator('#screenshot-file').setInputFiles({name:'card.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
   }
   const titles=page.locator('#review-panel [name=title]');
@@ -188,7 +191,8 @@ test('fast mode skips the second OCR engine even when native results include ver
     const c = document.createElement('canvas'); c.width = c.height = 100; return c.toDataURL().split(',')[1];
   });
   await page.getByRole('button', { name: /识别课程截图/ }).click();
-  await expect(page.locator('#ocr-accuracy')).toHaveValue('fast');
+  await expect(page.locator('#ocr-accuracy')).toHaveValue('stable');
+  await page.locator('#ocr-accuracy').selectOption('fast');
   await page.locator('#screenshot-file').setInputFiles({name:'fast.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
   await expect(page.locator('#review-form [name=dueDate]')).toHaveValue('2026-12-30');
   expect(await page.evaluate(()=>window.__workers)).toBe(0);
