@@ -32,7 +32,7 @@ const share = (id, text, images = []) => ({ id, text, images, receivedAt: Date.p
 
 test('pasting two tasks over five unsaved tasks distinguishes new results from the preserved draft after reload', async ({ page }) => {
   await app(page);
-  await seed(page,[['drafts',{id:'import',text:'旧通知',tasks:Array.from({length:5},(_,i)=>({id:'previous-'+i,title:'原有草稿'+i,details:'保留内容',selected:true})),sources:[],saved:0,skipped:0,stage:'review',accuracy:'fast'}]]);
+  await seed(page,[['drafts',{id:'import',text:'旧通知',tasks:Array.from({length:5},(_,i)=>({id:'previous-'+i,title:'原有草稿'+i,details:'保留内容',selected:true})),sources:[{id:'old-image',status:'done',text:'旧通知'}],saved:0,skipped:0,stage:'review',accuracy:'fast'}]]);
   await page.evaluate(()=>{window.__clipboardText='拾课课程任务\n1. 数学报告\n截止时间：2026-12-30\n要求：写出步骤\n2. 英语阅读\n截止时间：2027-01-04\n要求：阅读章节';});
   await page.getByRole('button',{name:'接收 / 粘贴通知',exact:true}).click();
   await expect(page.locator('.batch-task')).toHaveCount(7);
@@ -40,6 +40,7 @@ test('pasting two tasks over five unsaved tasks distinguishes new results from t
   await expect(page.locator('.batch-select small').filter({hasText:'本次导入'})).toHaveCount(2);
   await expect(page.locator('.batch-select small').filter({hasText:'上次草稿'})).toHaveCount(5);
   await expect(page.locator('#ocr-accuracy')).toHaveValue('stable');
+  await expect(page.locator('#legacy-recognition-note')).toContainText('已有内容尚未重算');
   await page.reload();
   await expect(page.locator('#draft-origin-summary')).toContainText('本次导入 2 项 · 上次草稿 5 项');
   await expect(page.locator('.batch-task [name=title]').first()).toHaveValue('原有草稿0');

@@ -16,11 +16,19 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
   const raw = $('#notification-text', element), panel = $('#review-panel', element), sourcePanel = $('.source-panel', element);
   raw.value = model.text;
   // Existing draft results stay intact; queued images use the restored stable default.
-  if (model.recognitionVersion !== 3) { model.accuracy = 'stable'; model.recognitionVersion = 3; }
+  if (model.recognitionVersion !== 3) {
+    model.legacyRecognitionResults = !!model.tasks.length && model.sources.some(source => source.status === 'done');
+    model.accuracy = 'stable'; model.recognitionVersion = 3;
+  }
   model.accuracy ||= 'stable';
   const options = document.createElement('div'); options.className = 'import-options';
   options.innerHTML = `<label class="field">识别方式<select id="ocr-accuracy"><option value="stable">稳定识别（推荐）</option><option value="fast">快速识别（需仔细核对）</option><option value="accurate">精细复核（较慢）</option></select></label><label class="field">通知发出日期<input id="notice-date" type="date" min="1900-01-01" max="2200-12-31" value="${localDate(new Date(model.referenceTime))}"></label><button class="text-button" id="recalculate-date">重算相对截止日期</button><p class="source-note">优先使用稳定识别。快速模式的准确度因图片而异。“下周一”等时间按通知发出日期计算，旧通知请改日期后重算。</p>`;
   $('#draft-state', element).after(options);
+  if (model.legacyRecognitionResults) {
+    const note = document.createElement('p'); note.className = 'notice'; note.id = 'legacy-recognition-note';
+    note.textContent = '这里保留了升级前的识别草稿，已有内容尚未重算。请先保留需要的修改，再重新选择截图使用稳定识别。';
+    options.after(note);
+  }
   $('#ocr-accuracy', options).value = model.accuracy;
   $('#ocr-accuracy', options).onchange = event => { model.accuracy = event.target.value; persist(); };
   function updateReference() {
@@ -271,7 +279,8 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
     const sources = files.map(file => ({ id: newId(), name: file.name, status: 'pending', text: '' }));
     completed = false;
     updateReference();
-    Object.assign(model, { text: '', extraText: '', tasks: [], sources, recentSourceIds: [], saved: 0, skipped: 0, overview: files.length > 1, stage: 'review' }); raw.value = '';
+    Object.assign(model, { text: '', extraText: '', tasks: [], sources, recentSourceIds: [], legacyRecognitionResults: false, saved: 0, skipped: 0, overview: files.length > 1, stage: 'review' }); raw.value = '';
+    $('#legacy-recognition-note', element)?.remove();
     try {
       await serial(() => replaceImportDraft(snapshot(), files.map((blob, index) => ({ id: sources[index].id, blob }))));
       ui.onDraft(snapshot()); filesList(); runQueue();
@@ -285,6 +294,7 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
     updateReference();
     model.tasks = extractTasks(model.text, new Date(model.referenceTime)).map(task => ({ ...task, selected: true }));
     model.recentSourceIds = [];
+    model.legacyRecognitionResults = false; $('#legacy-recognition-note', element)?.remove();
     completed = false;
     for (const source of model.sources) if (source.status === 'failed') source.status = 'skipped';
     model.saved = model.skipped = 0;
