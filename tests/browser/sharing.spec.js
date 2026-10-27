@@ -10,7 +10,7 @@ async function app(page) {
       if (m.method === 'readClipboard') result = { text: window.__clipboardText || '' };
       if (m.method === 'shareConsume') { if (window.__failAck) error = 'ack interrupted'; else window.__inbox = window.__inbox.filter(item => item.id !== m.args.id); }
       if (m.method === 'recognizeImage') result = window.__ocrResult || { text: '完成物理练习\n截止时间：2026年12月15日', engine: 'native-chinese' };
-      setTimeout(() => ShikeNative.onmessage?.({ data: JSON.stringify({ id: m.id, ok: !error, result, error }) }), 5);
+      setTimeout(() => ShikeNative.onmessage?.({ data: JSON.stringify({ id: m.id, ok: !error, result, error }) }), m.method === 'shareInbox' ? window.__inboxDelay || 5 : 5);
     } };
   });
   await page.goto('./#/home'); await expect(page.getByRole('heading', { name: '首页', exact: true })).toBeVisible();
@@ -148,6 +148,14 @@ test('empty or unavailable clipboard offers an editable paste field instead of t
   await page.getByRole('button', { name: '提取任务', exact: true }).click();
   await expect(page.locator('#review-form [name=course]')).toHaveValue('物理');
   await expect(page.locator('#review-form [name=dueDate]')).toHaveValue('2026-12-30');
+});
+
+test('a paste click during an automatic inbox check is retained and reads the clipboard once', async ({ page }) => {
+  await app(page);
+  await page.evaluate(() => { window.__clipboardText='课程：统计学\n完成统计学习题\n截止时间：2026年12月30日';window.__inboxDelay=600;dispatchEvent(new Event('shike-share-ready')); });
+  await page.getByRole('button',{name:'接收 / 粘贴通知',exact:true}).click();
+  await expect(page.locator('#review-form [name=course]')).toHaveValue('统计学');
+  expect(await page.evaluate(()=>window.__calls.filter(call=>call.method==='readClipboard').length)).toBe(1);
 });
 
 test('fast mode skips the second OCR engine even when native results include verification regions', async ({ page }) => {

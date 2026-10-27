@@ -366,9 +366,10 @@ async function startImport(example = false, initialText = '', mode = 'image') {
   finally { openingImport = false; }
 }
 
-let shareReady = false, receivingShare = false, shareAgain = false;
+let shareReady = false, receivingShare = false, shareAgain = false, pendingPaste = false;
 async function receiveInbox(manual = false) {
   if (!isNativeApp() || !shareReady) return;
+  if (manual) pendingPaste = true;
   if (receivingShare) { shareAgain = true; return; }
   if (openingImport) { setTimeout(() => receiveInbox(manual), 200); return; }
   receivingShare = true;
@@ -376,7 +377,8 @@ async function receiveInbox(manual = false) {
   try {
     const items = await nativeCall('shareInbox');
     if (!Array.isArray(items)) throw new Error('分享队列暂时不可用，请稍后重试。');
-    if (!items.length) { if (manual) await pasteNotification(); return; }
+    if (!items.length) { const paste = pendingPaste; pendingPaste = false; if (paste) await pasteNotification(); return; }
+    pendingPaste = false;
     shouldResume = true;
     $('#app').inert = true;
     await manualWrites;
@@ -388,7 +390,7 @@ async function receiveInbox(manual = false) {
       if (!result.duplicate) received++;
       await nativeCall('shareConsume', { id: item.id });
     }
-  } catch (failure) { error = failure; }
+  } catch (failure) { pendingPaste = false; error = failure; }
   finally {
     if (shouldResume) {
       state.importDraft = await loadDraft('import').catch(() => state.importDraft);
