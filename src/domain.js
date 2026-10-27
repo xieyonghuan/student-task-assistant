@@ -193,7 +193,14 @@ function sharedTaskBlocks(text, now) {
     return fields.slice(0, requirements < 0 ? undefined : requirements).some(line => deadline.test(line) || /^暂无截止日期$/.test(line));
   });
   const branded = /拾\s*课\s*[·・.。]?\s*课程任务/.test(text);
-  if (!branded || !starts.length) return null;
+  // A damaged or cropped banner is recoverable only when every numbered
+  // entry has a canonical outer deadline, rather than an ordinary notice.
+  const structured = starts.length >= 2 && starts.length === candidates.length && starts.every((start, index) =>
+    lines.slice(start + 1, starts[index + 1] ?? lines.length).some(line => {
+      const value = line.match(deadline)?.[1];
+      return /^暂无截止日期$/.test(line) || (value && /^(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|暂无截止日期)/.test(value));
+    }));
+  if ((!branded && !structured) || !starts.length) return null;
   return starts.map((start, index) => {
     let body = lines.slice(start + 1, starts[index + 1] ?? lines.length);
     body = body.filter(line => !/^拾课\s*[·・.。'‘’]?\s*学习任务助手$/.test(line));

@@ -38,6 +38,12 @@ test('OCR spacing loss and an unreadable requirements label keep dates and both 
   assert.match(tasks[0].details,/开始时间/);assert.equal(tasks[1].details,'下周一交');
 });
 
+test('a missing card banner is recoverable from multiple complete outer field groups', () => {
+  const tasks=extractTasks('1. 第四章作业\n截止时间：2026-12-30 23:59\n要求：开始时间：2026-12-01\n截止时间：2026-12-30\n2. 统计报告\n截止日期：2027-01-04\n要求：下周一交');
+  assert.deepEqual(tasks.map(t=>t.title),['第四章作业','统计报告']);
+  assert.deepEqual(tasks.map(t=>t.dueDate),['2026-12-30','2027-01-04']);
+});
+
 test('decimal attachment sizes are not numbered assignments', () => {
   const tasks = extractTasks('课程通知\n12.8 KB\n完成物理练习\n要求：写出步骤');
   assert.equal(tasks.length, 1); assert.equal(tasks[0].title, '完成物理练习');

@@ -23,7 +23,7 @@ public class OpenAndPasteTest {
     private void waitFor(String script) throws Exception {
         long until = System.currentTimeMillis()+90000;
         while(System.currentTimeMillis()<until){if("true".equals(eval(script)))return;Thread.sleep(200);}
-        fail("Open/paste did not complete: "+script+"; "+eval("JSON.stringify({focused:document.hasFocus(),page:document.body.innerText.slice(-1800)})"));
+        fail("Open/paste did not complete: "+script+"; "+eval("JSON.stringify({focused:document.hasFocus(),titles:[...document.querySelectorAll('[name=title]')].map(e=>e.value),sources:[...document.querySelectorAll('.source-reference pre')].map(e=>e.textContent),page:document.body.innerText.slice(-1800)})"));
     }
     @Test public void clipboardTextAndOpenWithGenericMimeImagesEnterRealExtractionWithoutStartingWasm() throws Exception {
         Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
