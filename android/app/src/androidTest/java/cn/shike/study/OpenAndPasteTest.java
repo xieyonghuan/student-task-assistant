@@ -55,4 +55,17 @@ public class OpenAndPasteTest {
             if(activity!=null)InstrumentationRegistry.getInstrumentation().runOnMainSync(()->activity.finish());
         }
     }
+    @Test public void sharedCardImageExtractsBothTasksOnceDespiteNestedExamTimes() throws Exception {
+        Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        try {
+            activity=(MainActivity)InstrumentationRegistry.getInstrumentation().startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            waitFor("!!document.querySelector('.home-capture')");
+            Intent open=new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse("content://cn.shike.study.test.images/card"),"application/octet-stream").setClass(context,ShareReceiverActivity.class).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->activity.startActivity(open));
+            waitFor("[...document.querySelectorAll('[name=title]')].some(e=>e.value==='第三章练习') && [...document.querySelectorAll('[name=title]')].some(e=>e.value==='概率报告')");
+            assertEquals("1",eval("[...document.querySelectorAll('[name=title]')].filter(e=>e.value==='第三章练习').length"));
+            assertEquals("1",eval("[...document.querySelectorAll('[name=title]')].filter(e=>e.value==='概率报告').length"));
+            assertEquals("true",eval("[...document.querySelectorAll('[name=title]')].filter(e=>['第三章练习','概率报告'].includes(e.value)).every(e=>e.form.querySelector('[name=dueDate]').value===(e.value==='第三章练习'?'2026-12-30':'2027-01-04'))"));
+        } finally { if(activity!=null)InstrumentationRegistry.getInstrumentation().runOnMainSync(()->activity.finish()); }
+    }
 }

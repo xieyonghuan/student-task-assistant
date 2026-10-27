@@ -1,7 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractTasks, extractCourse, extractDeadline } from '../src/domain.js';
+import { extractTasks, extractCourse, extractDeadline, normalizeNotice } from '../src/domain.js';
 import { formatSharedTasks } from '../src/sharing.js';
+
+test('shared text retains every task when the first requirements contain exam times', () => {
+  const tasks = [{ title: '第四章作业', dueDate: '2026-12-30', dueTime: '23:59', details: '第四章作业\n开始时间：2026-12-01/11:09/星期二\n截止时间：2026-12-30/23:59/星期三\n考试限时：不限时' },
+    { title: '统计学', course: '统计学', dueDate: '2027-01-04', details: '这是第一次作业\n下周一收齐\n使用完整 A4 纸\n@所有人\nThis is the first assignment.\n@Everyone' }];
+  const parsed = extractTasks(formatSharedTasks(tasks));
+  assert.equal(parsed.length, 2);
+  for (const [i, task] of tasks.entries()) {
+    for (const key of ['title', 'dueDate', 'details']) assert.equal(parsed[i][key], normalizeNotice(task[key]));
+    assert.equal(parsed[i].dueTime, task.dueTime || '');
+  }
+  assert.equal(parsed[0].course, ''); assert.equal(parsed[1].course, '统计学');
+});
+
+test('OCR card numbering wins over nested notifications and keeps outer deadlines local', () => {
+  const text = '拾课 · 课程任务\n共 2 项\n1. 第四章作业\n截止时间：2026-12-30 23:59\n要求：第四章作业\n开始时间：2026-12-01/11:09\n截止时间：2026-12-30/23:59\n考试限时：不限时\n课程：统计学\n2. 统计学\n截止日期：2027-01-04\n要求：100.9 KB\n这是第一次作业\n下周一收齐\n1. 写出步骤\n2. 使用 A4 纸\n旧附件：作业_1.统计学简介.pdf\n拾课 · 学习任务助手';
+  const tasks = extractTasks(text);
+  assert.equal(tasks.length, 2); assert.deepEqual(tasks.map(t => t.title), ['第四章作业', '统计学']);
+  assert.deepEqual(tasks.map(t => t.course), ['', '统计学']);
+  assert.deepEqual(tasks.map(t => [t.dueDate, t.dueTime]), [['2026-12-30', '23:59'], ['2027-01-04', '']]);
+  assert.match(tasks[1].details, /1\. 写出步骤\n2\. 使用 A4 纸/);
+  assert.doesNotMatch(tasks[0].details, /统计学/); assert.doesNotMatch(tasks[1].details, /学习任务助手/);
+});
+
+test('a single card and an undated task do not inherit dates from quoted requirements', () => {
+  const parsed = extractTasks(formatSharedTasks([{title:'复习章节', details:'参考旧截止时间：2026-12-30'}]));
+  assert.equal(parsed.length, 1); assert.equal(parsed[0].dueDate, ''); assert.equal(parsed[0].dateConfirmed, true);
+  const card = extractTasks('拾课 · 课程任务\n1 . 复习章节\n截止日期：2027-01-04\n要求：保留全部要求\n拾课 · 学习任务助手');
+  assert.equal(card[0].title, '复习章节'); assert.equal(card[0].dueDate, '2027-01-04');
+});
+
+test('OCR spacing loss and an unreadable requirements label keep dates and both task bodies', () => {
+  const tasks=extractTasks('拾课 . 课程任务\n1. 第四章作业\n截止时间 : 2026-12-3023:59\nBX: 第四章作业\n开始时间 : 2026-12-01/11:09\n截止时间 : 2026-12-30/23:59\n考试限时 : 不限时\n2. 统计报告\n截止日期 : 2027-01-04\n要求 : 下周一交\n拾课 \' 学习任务助手');
+  assert.equal(tasks.length,2); assert.equal(tasks[0].dueDate,'2026-12-30');assert.equal(tasks[0].dueTime,'23:59');
+  assert.match(tasks[0].details,/开始时间/);assert.equal(tasks[1].details,'下周一交');
+});
 
 test('decimal attachment sizes are not numbered assignments', () => {
   const tasks = extractTasks('课程通知\n12.8 KB\n完成物理练习\n要求：写出步骤');
@@ -27,7 +62,7 @@ test('task sharing preserves titles, requirements and dates without internal IDs
   assert.doesNotMatch(text, /private-id/);
   const tasks = extractTasks(text);
   assert.equal(tasks.length, 2); assert.equal(tasks[0].title, '物理练习'); assert.equal(tasks[0].dueDate, '2026-12-15'); assert.equal(tasks[0].dueTime, '18:30');
-  assert.match(tasks[1].details, /暂无截止日期/);
+  assert.equal(tasks[1].dueDate, ''); assert.equal(tasks[1].dateConfirmed, true); assert.equal(tasks[1].details, '');
   assert.throws(() => formatSharedTasks([]), /至少/);
   assert.throws(() => formatSharedTasks([{ title: 'x', details: 'x'.repeat(100000) }]), /过长/);
 });

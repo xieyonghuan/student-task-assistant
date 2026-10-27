@@ -158,6 +158,27 @@ test('a paste click during an automatic inbox check is retained and reads the cl
   expect(await page.evaluate(()=>window.__calls.filter(call=>call.method==='readClipboard').length)).toBe(1);
 });
 
+for (const mode of ['clipboard', 'image']) test(`shared card via ${mode} keeps two tasks once with separate outer deadlines`, async ({ page }) => {
+  await app(page);
+  const image = await page.evaluate(() => {
+    const text='拾课 · 课程任务\n1. 第三章练习\n截止时间：2026-12-3023:59\n要求：第三章练习\n开始时间：2026-12-01/11:09\n截止时间：2026-12-30/23:59\n考试限时：不限时\n2. 概率报告\n截止日期：2027-01-04\n要求：下周一提交报告\n使用完整的纸张';
+    window.__clipboardText=text; window.__ocrResult={text,engine:'native-chinese'};
+    const c=document.createElement('canvas');c.width=c.height=100;return c.toDataURL().split(',')[1];
+  });
+  if(mode==='clipboard') await page.getByRole('button',{name:'接收 / 粘贴通知',exact:true}).click();
+  else {
+    await page.getByRole('button',{name:/识别课程截图/}).click();
+    await page.locator('#screenshot-file').setInputFiles({name:'card.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  }
+  const titles=page.locator('#review-panel [name=title]');
+  await expect(titles).toHaveCount(2);
+  await expect(titles.nth(0)).toHaveValue('第三章练习');await expect(titles.nth(1)).toHaveValue('概率报告');
+  await expect(page.locator('#review-panel [name=dueDate]').nth(0)).toHaveValue('2026-12-30');
+  await expect(page.locator('#review-panel [name=dueTime]').nth(0)).toHaveValue('23:59');
+  await expect(page.locator('#review-panel [name=dueDate]').nth(1)).toHaveValue('2027-01-04');
+  await expect(page.locator('#review-panel [name=details]').nth(1)).toHaveValue('下周一提交报告\n使用完整的纸张');
+});
+
 test('fast mode skips the second OCR engine even when native results include verification regions', async ({ page }) => {
   await app(page);
   const image = await page.evaluate(() => {

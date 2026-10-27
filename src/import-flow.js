@@ -174,7 +174,8 @@ export function createImportFlow({ restored, example = '', initialText = '', mod
     if (!alive) return;
     filesList();
     if (!model.tasks.length) { done(); return; }
-    if (model.overview) { overview(); return; }
+    const taskCard = [model.text, ...model.sources.map(source => source.text)].some(text => /拾\s*课\s*[·・.。]?\s*课程任务/.test(text || ''));
+    if (model.overview || (taskCard && model.tasks.length > 1)) { overview(); return; }
     releaseImages();
     const task = model.tasks[0];
     const total = model.saved + model.skipped + model.tasks.length;

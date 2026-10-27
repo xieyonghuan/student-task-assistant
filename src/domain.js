@@ -179,8 +179,46 @@ export function extractCourse(raw) {
   return attachment?.[1] || '';
 }
 
+// Shared cards contain complete tasks, including old notices inside “要求”.
+// Read their outer fields before applying heuristics for a single exam screenshot.
+function sharedTaskBlocks(text, now) {
+  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+  const heading = /^\d{1,3}\s*[.、)]\s*(?!\d)(\S.*)$/;
+  const deadline = /^(?:截止时间|截止日期)\s*[:：]\s*(.*)$/;
+  const candidates = lines.flatMap((line, index) => heading.test(line) ? [index] : []);
+  const starts = candidates.filter((start, index) => {
+    const end = candidates[index + 1] ?? lines.length;
+    const fields = lines.slice(start + 1, end);
+    const requirements = fields.findIndex(line => /^要求\s*[:：]/.test(line));
+    return fields.slice(0, requirements < 0 ? undefined : requirements).some(line => deadline.test(line) || /^暂无截止日期$/.test(line));
+  });
+  const branded = /拾\s*课\s*[·・.。]?\s*课程任务/.test(text);
+  if (!branded || !starts.length) return null;
+  return starts.map((start, index) => {
+    let body = lines.slice(start + 1, starts[index + 1] ?? lines.length);
+    body = body.filter(line => !/^拾课\s*[·・.。'‘’]?\s*学习任务助手$/.test(line));
+    // Older image cards put the next task's course just before its heading.
+    if (index + 1 < starts.length && /^课程\s*[:：]/.test(body.at(-1) || '')) body.pop();
+    const requirementIndex = body.findIndex(line => /^要求\s*[:：]/.test(line));
+    const firstDeadline = body.findIndex(line => deadline.test(line) || /^暂无截止日期$/.test(line));
+    const fields = body.slice(0, firstDeadline + 1);
+    const dateLine = fields.find(line => deadline.test(line));
+    const dateText = dateLine?.match(deadline)[1].replace(/\(当天\s*00:00\)/g, '').replace(/^(\d{4}-\d{2}-\d{2})(?=\d{1,2}:)/, '$1 ');
+    const undated = !dateLine || /暂无截止日期/.test(dateText);
+    const precedingCourse = /^课程\s*[:：]/.test(lines[start - 1] || '') ? lines[start - 1] : '';
+    const course = extractCourse(fields.join('\n')) || extractCourse(precedingCourse);
+    const titleLines = body.slice(0, body.findIndex(line => /^(?:课程|截止时间|截止日期|暂无截止日期)\s*[:：]?/.test(line)));
+    const title = [lines[start].match(heading)[1], ...titleLines].join('').slice(0, 120);
+    const details = body.slice(requirementIndex < 0 ? firstDeadline + 1 : requirementIndex).join('\n').replace(/^要求\s*[:：]\s*/, '');
+    return { id: newId(), title, course, details,
+      ...(undated ? { dueDate: '', dueTime: '', dateConfirmed: true, dateHint: '' } : extractDeadline(dateText, now)) };
+  });
+}
+
 export function extractTasks(raw, now = new Date()) {
   let text = normalizeNotice(raw);
+  const shared = sharedTaskBlocks(text, now);
+  if (shared) return shared;
   const course = extractCourse(text), contextDeadline = extractDeadline(text, now);
   const finish = tasks => tasks.map(task => ({ ...task, course: extractCourse(task.details) || course }));
   // A decimal file size such as 12.8 KB is not task number 12.
