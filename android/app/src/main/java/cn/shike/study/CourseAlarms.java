@@ -55,6 +55,12 @@ final class CourseAlarms {
     static String token(JSONObject occurrence, int lead) throws Exception {
         return occurrence.getString("key") + "@" + occurrence.getLong("begin") + "@" + lead;
     }
+    private static String instance(String token) { return token.substring(0, token.lastIndexOf('@')); }
+    private static boolean received(Set<String> receipts, String token) {
+        String current = instance(token);
+        for (String receipt : receipts) if (instance(receipt).equals(current)) return true;
+        return false;
+    }
     private void clearNotices(Set<String> valid) {
         for (android.service.notification.StatusBarNotification notice : notifications.getActiveNotifications())
             if (CHANNEL.equals(notice.getNotification().getChannelId()) && !valid.contains(notice.getTag())) notifications.cancel(notice.getTag(), notice.getId());
@@ -87,7 +93,7 @@ final class CourseAlarms {
                 for (int i = 0; i < events.length() && next.size() < 64; i++) {
                     JSONObject event = events.getJSONObject(i); long fire = event.getLong("begin") - lead * 60000L;
                     String receipt = token(event, lead), key = "at@" + fire;
-                    if (fire <= now || delivered.contains(receipt) || next.contains(key)) continue;
+                    if (fire <= now || received(delivered, receipt) || next.contains(key)) continue;
                     schedule(fire, pending(FIRE, key)); next.add(key);
                 }
                 if (!next.isEmpty()) alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, now + 12 * 3600000L, pending(REFRESH, "refresh"));
@@ -116,7 +122,7 @@ final class CourseAlarms {
             JSONObject state = new CourseStore(context).read();
             if (!state.getBoolean("reminders") || !granted()) return false;
             Set<String> seen = new HashSet<>(prefs.getStringSet("delivered", Collections.emptySet()));
-            if (seen.contains(key)) return false;
+            if (received(seen, key)) return false;
             JSONObject table = CourseEngine.table(state, state.getString("primaryId"));
             LocalDate today = Instant.ofEpochMilli(now).atZone(CourseEngine.ZONE).toLocalDate();
             JSONArray events = CourseEngine.occurrences(table, today.minusDays(1), today.plusDays(1));

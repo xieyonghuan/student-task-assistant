@@ -101,6 +101,9 @@ public class CourseIntegrationTest {
         String newToken = CourseAlarms.token(moved, 10);
         assertTrue(alarms.deliver(newToken, moved.getLong("begin") - 10 * 60000));
         assertFalse(new CourseAlarms(context).deliver(newToken, moved.getLong("begin") - 10 * 60000));
+        changed = store.read(); changed.put("leadMinutes", 5); store.replace(changed, changed.getLong("revision")); alarms.rebuild();
+        assertEquals(2, alarms.status().getInt("scheduled"));
+        assertFalse("Changing the lead time must not notify the same class twice", alarms.deliver(CourseAlarms.token(moved, 5), moved.getLong("begin") - 5 * 60000));
         changed = store.read(); changed.put("reminders", false); store.replace(changed, changed.getLong("revision")); alarms.rebuild();
         assertEquals(0, alarms.status().getInt("scheduled"));
         assertFalse(alarms.deliver(newToken, moved.getLong("begin")));
