@@ -55,6 +55,10 @@ final class CourseAlarms {
     static String token(JSONObject occurrence, int lead) throws Exception {
         return occurrence.getString("key") + "@" + occurrence.getLong("begin") + "@" + lead;
     }
+    private void clearNotices(Set<String> valid) {
+        for (android.service.notification.StatusBarNotification notice : notifications.getActiveNotifications())
+            if (CHANNEL.equals(notice.getNotification().getChannelId()) && !valid.contains(notice.getTag())) notifications.cancel(notice.getTag(), notice.getId());
+    }
     private void schedule(long at, PendingIntent pending) {
         if (exact()) {
             try { alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending); return; }
@@ -69,24 +73,41 @@ final class CourseAlarms {
             alarms.cancel(pending(REFRESH, "refresh"));
             prefs.edit().putStringSet("scheduled", Collections.emptySet()).putString("error", "").commit();
             JSONObject state = new CourseStore(context).read();
-            if (!state.getBoolean("reminders") || !granted()) return;
+            if (!state.getBoolean("reminders") || !granted()) { clearNotices(Collections.emptySet()); return; }
             JSONObject table = CourseEngine.table(state, state.getString("primaryId"));
             long now = System.currentTimeMillis(); LocalDate today = Instant.ofEpochMilli(now).atZone(CourseEngine.ZONE).toLocalDate();
             // Include moved occurrences outside the nominal term. The engine evaluates each original only once.
             JSONArray events = CourseEngine.occurrences(table, today, LocalDate.of(2200, 12, 31));
             int lead = state.getInt("leadMinutes"); Set<String> delivered = prefs.getStringSet("delivered", Collections.emptySet());
+            Set<String> validNotices = new HashSet<>();
+            for (int i = 0; i < events.length(); i++) if (events.getJSONObject(i).getLong("finish") > now) validNotices.add(token(events.getJSONObject(i), lead));
+            clearNotices(validNotices);
             Set<String> next = new HashSet<>();
             try {
                 for (int i = 0; i < events.length() && next.size() < 64; i++) {
                     JSONObject event = events.getJSONObject(i); long fire = event.getLong("begin") - lead * 60000L;
-                    String key = token(event, lead);
-                    if (fire <= now || delivered.contains(key)) continue;
+                    String receipt = token(event, lead), key = "at@" + fire;
+                    if (fire <= now || delivered.contains(receipt) || next.contains(key)) continue;
                     schedule(fire, pending(FIRE, key)); next.add(key);
                 }
                 if (!next.isEmpty()) alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, now + 12 * 3600000L, pending(REFRESH, "refresh"));
             } catch (Exception error) {
                 prefs.edit().putString("error", "课表已保存，但系统未完成提醒调度。请检查提醒权限并重试。").commit();
             } finally { prefs.edit().putStringSet("scheduled", next).commit(); }
+        }
+    }
+    void deliverAt(long fire, long now) throws Exception {
+        synchronized (CourseStore.LOCK) {
+            JSONObject state = new CourseStore(context).read();
+            if (!state.getBoolean("reminders") || !granted()) return;
+            LocalDate date = Instant.ofEpochMilli(now).atZone(CourseEngine.ZONE).toLocalDate();
+            JSONArray events = CourseEngine.occurrences(CourseEngine.table(state, state.getString("primaryId")), date.minusDays(1), date.plusDays(1));
+            int lead = state.getInt("leadMinutes");
+            // One wake-up for courses starting together avoids per-app idle alarm throttling.
+            for (int i = 0; i < events.length(); i++) {
+                JSONObject event = events.getJSONObject(i);
+                if (event.getLong("begin") - lead * 60000L == fire) deliver(token(event, lead), now);
+            }
         }
     }
     /** Re-read live rules before notifying: cancelled/moved/deleted/old-lead alarms are harmless. */
@@ -118,8 +139,11 @@ final class CourseAlarms {
                     .setTimeoutAfter(Math.max(60000L, event.getLong("finish") - now)).build();
                 notifications.notify(key, 0, notice);
                 seen.add(key);
-                // Keep a bounded durable receipt set; full-term timetable limits bound typical usage as well.
-                if (seen.size() > 4000) { ArrayList<String> sorted = new ArrayList<>(seen); sorted.sort(String::compareTo); seen = new HashSet<>(sorted.subList(sorted.size() - 3000, sorted.size())); }
+                // Old deliveries can no longer pass the time check, so keep only recent receipts.
+                seen.removeIf(receipt -> {
+                    try { int last = receipt.lastIndexOf('@'), before = receipt.lastIndexOf('@', last - 1); return Long.parseLong(receipt.substring(before + 1, last)) < now - 2 * 86400000L; }
+                    catch (RuntimeException invalid) { return true; }
+                });
                 prefs.edit().putStringSet("delivered", seen).commit(); return true;
             }
             return false;

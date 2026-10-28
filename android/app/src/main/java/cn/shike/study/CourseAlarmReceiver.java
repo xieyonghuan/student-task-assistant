@@ -10,8 +10,10 @@ public final class CourseAlarmReceiver extends BroadcastReceiver {
         new Thread(() -> {
             try {
                 CourseAlarms alarms = new CourseAlarms(context);
-                if (CourseAlarms.FIRE.equals(intent.getAction()) && intent.getData() != null)
-                    alarms.deliver(intent.getData().getLastPathSegment(), System.currentTimeMillis());
+                if (CourseAlarms.FIRE.equals(intent.getAction()) && intent.getData() != null) {
+                    String key = intent.getData().getLastPathSegment();
+                    if (key != null && key.startsWith("at@")) alarms.deliverAt(Long.parseLong(key.substring(3)), System.currentTimeMillis());
+                }
                 alarms.rebuild();
             } catch (Exception error) {
                 context.getSharedPreferences("course-alarm-state", Context.MODE_PRIVATE).edit()
