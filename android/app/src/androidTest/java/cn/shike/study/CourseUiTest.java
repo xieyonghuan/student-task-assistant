@@ -74,6 +74,7 @@ public class CourseUiTest {
             assertEquals(2, store.read().getJSONArray("tables").getJSONObject(0).getJSONArray("courses").length());
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> activity.finish()); open();
             waitFor("!!document.querySelector('.home-capture')", 30); eval("location.hash='#/timetable'"); waitFor("document.querySelectorAll('.course-row').length===2", 20);
+            eval("document.querySelector('.course-all').open=true");
             assertEquals("true", eval("document.querySelector('.course-arrangements').innerText.includes('运筹学')"));
         } finally {
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> activity.finish());
