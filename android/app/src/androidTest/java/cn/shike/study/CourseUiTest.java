@@ -34,14 +34,14 @@ public class CourseUiTest {
         try {
             waitFor("!!document.querySelector('.home-capture')", 30);
             eval("location.hash='#/timetable'"); waitFor("!!document.querySelector('[data-course=new-table]')", 20);
-            eval("document.querySelector('[data-course=new-table]').click();const f=document.querySelector('#course-table-form');f.elements.name.value='测试学期';f.elements.firstMonday.value='2026-10-26';f.requestSubmit()");
+            eval("(()=>{document.querySelector('[data-course=new-table]').click();const f=document.querySelector('#course-table-form');f.elements.name.value='测试学期';f.elements.firstMonday.value='2026-10-26';f.requestSubmit()})()");
             waitFor("!!document.querySelector('.course-grid')", 20);
             eval("document.querySelector('[data-course=ocr]').click()"); waitFor("!!document.querySelector('#course-images')", 15);
             eval("document.querySelector('#course-import-mode').value='list';document.querySelector('#course-import-mode').dispatchEvent(new Event('change'))");
             eval("(()=>{const c=document.createElement('canvas');c.width=1600;c.height=1000;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,1600,1000);x.fillStyle='#111';x.font='42px sans-serif';['课程名称：运筹学','周一 第1-2节','周次：1-16','教室：A201','','课程名称：大学英语','周二 第3-4节','周次：1-16','教室：B102'].forEach((l,i)=>x.fillText(l,60,80+i*85));c.toBlob(b=>{const d=new DataTransfer();d.items.add(new File([b],'课程.png',{type:'image/png'}));const f=document.querySelector('#course-images');f.files=d.files;f.dispatchEvent(new Event('change'));});})()");
             waitFor("document.querySelectorAll('.course-candidates fieldset').length===2 && !document.querySelector('#course-import-confirm button[type=submit]').disabled", 180);
             assertEquals("true", eval("[...document.querySelectorAll('.course-candidates [name=name]')].some(e=>e.value==='运筹学')"));
-            eval("const f=document.querySelector('#course-import-confirm');f.elements.checked.checked=true;f.requestSubmit()");
+            eval("(()=>{const f=document.querySelector('#course-import-confirm');f.elements.checked.checked=true;f.requestSubmit()})()");
             waitFor("document.querySelectorAll('.course-row').length===2 && !document.querySelector('dialog[open]')", 20);
             assertEquals(2, store.read().getJSONArray("tables").getJSONObject(0).getJSONArray("courses").length());
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> activity.finish()); open();
