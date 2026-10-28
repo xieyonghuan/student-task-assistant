@@ -86,7 +86,7 @@ function compactBlankRows(canvas, ink) {
   return compact;
 }
 
-async function imageCanvas(file) {
+async function imageCanvas(file, keepLayout = false) {
   const bitmap = await createImageBitmap(file);
   if (!bitmap.width || !bitmap.height || bitmap.width * bitmap.height > 80000000) {
     bitmap.close(); throw new Error('图片尺寸过大，请裁剪为课程通知部分后再试。');
@@ -119,7 +119,7 @@ async function imageCanvas(file) {
   }
   ctx.putImageData(pixels, 0, 0);
   // Remove only large empty horizontal gaps; keep text at its original resolution.
-  return compactBlankRows(canvas, ink);
+  return keepLayout ? canvas : compactBlankRows(canvas, ink);
 }
 
 async function recognizeNative(file, job, accuracy) {
@@ -203,7 +203,7 @@ async function refineDateLines(worker, canvas, data, job, onProgress) {
   return text;
 }
 
-export async function recognizeImage(file, onProgress = () => {}, { accuracy = 'stable' } = {}) {
+export async function recognizeImage(file, onProgress = () => {}, { accuracy = 'stable', layout = false } = {}) {
   cancelOCR();
   const job = { cancelled: false, session: null, canvas: null, rejectCancel: null, onProgress };
   activeJob = job;
@@ -211,7 +211,7 @@ export async function recognizeImage(file, onProgress = () => {}, { accuracy = '
   let timer;
   let succeeded = false;
   const work = async () => {
-    if (isNativeApp() && (accuracy === 'fast' || accuracy === 'accurate')) {
+    if (!layout && isNativeApp() && (accuracy === 'fast' || accuracy === 'accurate')) {
       try { return await recognizeNative(file, job, accuracy); }
       catch (error) {
         if (job.cancelled) throw error;
@@ -220,7 +220,7 @@ export async function recognizeImage(file, onProgress = () => {}, { accuracy = '
     }
     // Overlap engine loading with image decoding and pixel preparation.
     const [canvas, worker] = await Promise.all([
-      imageCanvas(file).then(canvas => {
+      imageCanvas(file, layout).then(canvas => {
         if (job.cancelled) { canvas.width = canvas.height = 1; throw cancelledError(); }
         job.canvas = canvas; return canvas;
       }),
@@ -230,8 +230,22 @@ export async function recognizeImage(file, onProgress = () => {}, { accuracy = '
     if (job.cancelled) throw new Error('已取消识别。');
     await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT, preserve_interword_spaces: '0', tessedit_char_whitelist: '' });
     const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true });
-    const text = await refineDateLines(worker, canvas, data, job, onProgress);
-    return { text: normalizeNotice(text), confidence: data.confidence, engine: 'local-stable' };
+    const text = layout ? data.text : await refineDateLines(worker, canvas, data, job, onProgress);
+    const lines = layout ? (data.blocks || []).flatMap(b => b.paragraphs.flatMap(p => p.lines)).flatMap(l => {
+      // Sparse OCR can put several timetable columns on one logical text line.
+      // Split only large geometric gaps, retaining original screenshot coordinates.
+      const groups = []; let group = [];
+      for (const word of l.words || []) {
+        const previous = group.at(-1);
+        if (previous && word.bbox.x0 - previous.bbox.x1 > Math.max(16, (l.bbox.y1 - l.bbox.y0) * .8)) { groups.push(group); group = []; }
+        group.push(word);
+      }
+      if (group.length) groups.push(group);
+      return groups.length > 1 ? groups.map(words => ({ text: words.map(w=>w.text).join(' '), confidence: l.confidence,
+        bbox: { x0: Math.min(...words.map(w=>w.bbox.x0)), y0: Math.min(...words.map(w=>w.bbox.y0)), x1: Math.max(...words.map(w=>w.bbox.x1)), y1: Math.max(...words.map(w=>w.bbox.y1)) } }))
+        : [{ text: l.text.trim(), bbox: l.bbox, confidence: l.confidence }];
+    }) : undefined;
+    return { text: normalizeNotice(text), confidence: data.confidence, engine: 'local-stable', ...(layout ? { lines, width: canvas.width, height: canvas.height } : {}) };
   };
   try {
     const result = await Promise.race([work(), cancellation, new Promise((_, reject) => { timer = setTimeout(() => { job.cancelled = true; reject(new Error('识别用时较长，请裁剪截图后重试，或直接粘贴通知文字。')); }, 180000); })]);

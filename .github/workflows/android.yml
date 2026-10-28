@@ -1,5 +1,14 @@
 name: Build Android app
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'package*.json'
+      - '.github/workflows/android.yml'
   push:
     branches: [main]
     paths:
@@ -61,8 +70,15 @@ jobs:
         with:
           name: android-test-results-api-${{ matrix.api }}
           path: android/app/build/reports/androidTests/
-      - name: Publish unsigned build for local private-key signing
+      - name: Save unsigned APK for review
         if: matrix.api == 35
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unsigned-review
+          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 7
+      - name: Publish unsigned build for local private-key signing
+        if: matrix.api == 35 && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

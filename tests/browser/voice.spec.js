@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
+import { existsSync } from 'node:fs';
 
-test.use({ launchOptions: { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] } });
+const edgePath = process.env.SHIKE_BROWSER_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
+test.use({ launchOptions: { ...(existsSync(edgePath) ? { executablePath: edgePath } : {}), args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] } });
 
 async function homepage(page) {
   await page.goto('./');

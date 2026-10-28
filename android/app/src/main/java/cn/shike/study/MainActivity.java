@@ -44,7 +44,7 @@ public final class MainActivity extends Activity {
     private CalendarStore calendar;
     private NativeOcr ocr;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private Reply calendarPermissionReply, saveReply;
+    private Reply calendarPermissionReply, saveReply, notificationPermissionReply;
     private String saveContent;
     private PermissionRequest microphone;
     private ValueCallback<Uri[]> chooser;
@@ -171,6 +171,34 @@ public final class MainActivity extends Activity {
     }
     private void dispatch(String method, JSONObject args, Reply reply) throws Exception {
         switch (method) {
+            case "courseLoad": background(reply, () -> new CourseStore(this).read()); break;
+            case "courseSave": background(reply, () -> {
+                JSONObject saved = new CourseStore(this).replace(args.getJSONObject("state"), args.getLong("revision"));
+                new CourseAlarms(this).rebuild(); return saved;
+            }); break;
+            case "courseWeek": background(reply, () -> new CourseStore(this).week(args.getString("tableId"), args.getString("from"))); break;
+            case "courseReminderStatus": background(reply, () -> { CourseAlarms alarms = new CourseAlarms(this); alarms.rebuild(); return alarms.status(); }); break;
+            case "courseNotificationPermission":
+                if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    if (notificationPermissionReply != null) reply.send(null, new IllegalStateException("正在等待通知授权。"));
+                    else { notificationPermissionReply = reply; requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 102); }
+                } else reply.send(new CourseAlarms(this).status(), null);
+                break;
+            case "courseExactSettings":
+                if (Build.VERSION.SDK_INT >= 31) startActivity(new Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + getPackageName())));
+                reply.send(true, null); break;
+            case "courseNotificationSettings":
+                startActivity(new Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName()).putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, CourseAlarms.CHANNEL));
+                reply.send(true, null); break;
+            case "courseOpenTarget": {
+                Intent intent = getIntent(); JSONObject target = new JSONObject();
+                if (intent.hasExtra("courseTableId")) {
+                    target.put("tableId", intent.getStringExtra("courseTableId")).put("date", intent.getStringExtra("courseDate")).put("key", intent.getStringExtra("courseKey"));
+                    intent.removeExtra("courseTableId"); intent.removeExtra("courseDate"); intent.removeExtra("courseKey");
+                }
+                reply.send(target, null); break;
+            }
             case "readClipboard": {
                 try {
                 if (!hasWindowFocus()) throw new IllegalStateException("请在拾课窗口中点击粘贴，或长按输入框粘贴文字。");
@@ -220,6 +248,10 @@ public final class MainActivity extends Activity {
     }
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(code, permissions, results);
+        if (code == 102 && notificationPermissionReply != null) {
+            Reply reply = notificationPermissionReply; notificationPermissionReply = null;
+            background(reply, () -> { CourseAlarms alarms = new CourseAlarms(this); alarms.rebuild(); return alarms.status(); });
+        }
         if (code == 100 && calendarPermissionReply != null) {
             Reply reply = calendarPermissionReply; calendarPermissionReply = null;
             background(reply, () -> calendar.enable());
@@ -256,7 +288,12 @@ public final class MainActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle state) { super.onSaveInstanceState(state); if (web != null) web.saveState(state); }
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent); setIntent(intent);
-        if (web != null) web.evaluateJavascript("window.dispatchEvent(new Event('shike-share-ready'))", null);
+        if (web != null) web.evaluateJavascript("window.dispatchEvent(new Event('shike-share-ready'));window.dispatchEvent(new Event('shike-course-open'))", null);
+    }
+    @Override protected void onResume() {
+        super.onResume();
+        worker.execute(() -> { try { new CourseAlarms(this).rebuild(); } catch (Exception ignored) { } });
+        if (web != null) web.evaluateJavascript("window.dispatchEvent(new Event('shike-course-resume'))", null);
     }
     WebView browserForTests() { return web; }
     @Override public void onBackPressed() {

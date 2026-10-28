@@ -1,5 +1,6 @@
 import { isNativeApp } from './native.js';
 export const PAGES = {
+  timetable: { route: '/timetable', title: '课程表', subtitle: '按周查看课程，调整上课安排，准时收到提醒。', symbol: 'calendar' },
   capture: { route: '/import', title: '导入通知', subtitle: '上传截图或粘贴文字，提取后进入任务确认页面。', symbol: 'scan' },
   review: { route: '/import/review', title: '确认任务', subtitle: '逐项核对任务名称、截止日期和具体要求，确认后保存。', symbol: 'check' },
   home: { route: '/home', title: '首页', subtitle: '从一条通知、一段话开始，收好今天的学习安排。', symbol: 'home' },
@@ -40,6 +41,7 @@ function completedPage(state, counts, icon, escape) {
 }
 
 export function renderLearningPage(state, counts, icon, escape) {
+  if (state.view === 'timetable') return '<div id="timetable-page-host"></div>';
   if (['capture', 'review'].includes(state.view)) return '<div id="import-page-host"></div>';
   return ({ home: homePage, all: allPage, upcoming: upcomingPage, overdue: overduePage, undated: undatedPage, completed: completedPage })[state.view](state, counts, icon, escape);
 }
