@@ -45,7 +45,7 @@ async function add(page,name='高等数学'){
 test('new timetable, manual courses, copy, independent viewing and reminder source survive reload',async({page})=>{
   await app(page,{schema:1,revision:0,primaryId:'',reminders:false,leadMinutes:10,tables:[]});
   await page.getByRole('button',{name:'创建第一份课表'}).click();let d=page.locator('dialog[open]').last();
-  await d.locator('[name=name]').fill('大二秋季');await d.locator('[name=firstMonday]').fill('2026-10-26');await d.locator('[name=periodCount]').selectOption('4');await d.getByRole('button',{name:'下一步：设置作息'}).click();await d.getByRole('button',{name:'保存课表'}).click();
+  await d.locator('[name=name]').fill('大二秋季');await d.locator('[name=firstMonday]').fill('2026-10-26');await d.getByLabel('上午上课节数').selectOption('4');await d.getByLabel('下午上课节数').selectOption('0');await d.getByLabel('晚上上课节数').selectOption('0');await d.getByRole('button',{name:'下一步：设置作息'}).click();await d.getByRole('button',{name:'保存课表'}).click();
   await expect(page.locator('.course-grid')).toBeVisible();await add(page);
   await page.getByRole('button',{name:'上课提醒',exact:true}).click();d=page.locator('dialog[open]').last();
   const primary=await page.evaluate(()=>window.__courseState.tables[0].id);await d.locator('[name=primaryId]').selectOption(primary);await d.getByLabel('开启上课提醒').check();
@@ -124,7 +124,7 @@ test('real offline grid OCR preserves columns and returns two editable course ar
 
 test('period count precedes paged per-period times and supports manual entry and native selection',async({page})=>{
   await page.setViewportSize({width:393,height:851});await app(page);await page.getByRole('button',{name:'新建课表',exact:true}).click();const d=page.locator('dialog[open]').last();
-  await expect(d.locator('textarea')).toHaveCount(0);await d.locator('[name=firstMonday]').fill('2026-10-26');await d.locator('[name=periodCount]').selectOption('8');await d.getByRole('button',{name:'下一步：设置作息'}).click();
+  await expect(d.locator('textarea')).toHaveCount(0);await d.locator('[name=firstMonday]').fill('2026-10-26');await d.getByLabel('上午上课节数').selectOption('4');await d.getByLabel('下午上课节数').selectOption('4');await d.getByLabel('晚上上课节数').selectOption('0');await d.getByRole('button',{name:'下一步：设置作息'}).click();
   await expect(d.locator('.period-row')).toHaveCount(4);await d.getByRole('button',{name:'选择第1节上课时间',exact:true}).click();await expect(d.getByLabel('第1节上课时间',{exact:true})).toHaveValue('08:10');await d.getByLabel('第1节下课时间',{exact:true}).fill('08:50');
   await d.getByRole('button',{name:'下一组',exact:true}).click();await expect(d.locator('#period-page-label')).toContainText('第 5—8 节');await d.getByRole('button',{name:'上一组',exact:true}).click();await expect(d.getByLabel('第1节下课时间',{exact:true})).toHaveValue('08:50');
   await d.getByRole('button',{name:'下一组',exact:true}).click();await d.getByRole('button',{name:'保存课表',exact:true}).click();await expect(d).toHaveCount(0);
@@ -135,8 +135,10 @@ const privateImages=Array.from({length:7},(_,i)=>path.resolve(`tests/fixtures/lo
 test('private seven screenshots produce eleven courses, preserve all meetings and confirm one course per screen',async({page})=>{
   test.skip(!privateImages.every(existsSync),'Private screenshots stay local and are not committed.');
   test.setTimeout(240000);const state=fixture();state.tables[0].courses=[];state.tables[0].periods=Array.from({length:12},(_,i)=>({start:`${String(6+i).padStart(2,'0')}:00`,end:`${String(6+i).padStart(2,'0')}:45`}));
-  await page.setViewportSize({width:393,height:851});await app(page,state);await page.getByRole('button',{name:'识别课表截图',exact:true}).first().click();await page.locator('#course-images').setInputFiles(privateImages);
+  await page.setViewportSize({width:393,height:851});await app(page,state);await page.getByRole('button',{name:'识别课表截图',exact:true}).first().click();const started=Date.now();await page.locator('#course-images').setInputFiles([...privateImages,privateImages[0]]);
   await expect(page.locator('.course-review-progress')).toContainText('第 1 / 11 门课程',{timeout:180000});await expect(page.locator('.course-review-progress')).toContainText('34 个上课安排');
+  const metrics=await page.evaluate(()=>new Promise(resolve=>{const r=indexedDB.open('shike-course-drafts');r.onsuccess=()=>{const db=r.result,q=db.transaction('drafts').objectStore('drafts').get('import');q.onsuccess=()=>{resolve(q.result.sources.map(s=>({elapsedMs:s.elapsedMs,cacheHits:s.cacheHits,recognitions:s.recognitions,reused:s.reused})));db.close();};};}));
+  expect(metrics.at(-1).reused).toBe(true);expect(metrics.at(-1).elapsedMs).toBe(0);expect(metrics.reduce((n,m)=>n+(m.cacheHits||0),0)).toBeGreaterThan(0);console.log('Seven private images + exact duplicate:',JSON.stringify({wallMs:Date.now()-started,sources:metrics}));
   await expect(page.locator('.course-candidates fieldset')).toHaveCount(1);await expect(page.locator('#course-confirm-next')).toBeInViewport();
   const first=await page.locator('.course-candidates [name=name]').inputValue();await page.locator('.course-candidates [name=teacher]').fill('本机核对后教师');
   await page.reload();await expect(page.locator('.course-toolbar')).toBeVisible();await page.getByRole('button',{name:'识别课表截图',exact:true}).first().click();await expect(page.locator('.course-candidates [name=name]')).toHaveValue(first);await expect(page.locator('.course-candidates [name=teacher]')).toHaveValue('本机核对后教师');
@@ -145,4 +147,48 @@ test('private seven screenshots produce eleven courses, preserve all meetings an
   const courses=await page.evaluate(()=>window.__courseState.tables[0].courses);expect(new Set(courses.map(c=>c.name)).size).toBe(11);expect(courses.filter(c=>c.day&&c.start&&c.weeks.length)).toHaveLength(33);
   expect(courses.find(c=>c.name==='中国书法艺术').day).toBe(0);expect(courses.filter(c=>c.name==='金工实习B')).toHaveLength(9);expect(courses.filter(c=>c.name==='运筹学')).toHaveLength(3);
   const micro=courses.find(c=>c.name==='微型计算机控制技术实践');expect(micro.weeks).toEqual([13,14]);expect(micro.day).toBe(7);expect(micro.start).toBe(9);
+});
+
+test('grouped counts and lesson duration calculate end times and survive reopening',async({page})=>{
+  await page.setViewportSize({width:393,height:851});await app(page);await page.getByRole('button',{name:'新建课表',exact:true}).click();const d=page.locator('dialog[open]').last();
+  await d.locator('[name=firstMonday]').fill('2026-10-26');await d.locator('[name=lessonMinutes]').fill('50');
+  for(const name of ['上午上课节数','下午上课节数','晚上上课节数'])await d.getByLabel(name).selectOption('0');
+  await d.getByRole('button',{name:'下一步：设置作息'}).click();await expect(d.locator('[role=alert]')).toContainText('1 至 20');
+  await d.getByLabel('上午上课节数').selectOption('2');await d.getByLabel('下午上课节数').selectOption('2');await d.getByRole('button',{name:'下一步：设置作息'}).click();
+  await expect(d.getByLabel('第1节下课时间',{exact:true})).toHaveValue('08:50');await expect(d.getByLabel('第3节上课时间',{exact:true})).toHaveValue('14:00');
+  await d.getByLabel('第1节上课时间',{exact:true}).fill('08:05');await d.getByLabel('第1节下课时间',{exact:true}).focus();await expect(d.getByLabel('第1节下课时间',{exact:true})).toHaveValue('08:55');
+  await d.getByLabel('第1节下课时间',{exact:true}).fill('08:52');await d.getByRole('button',{name:'保存课表',exact:true}).click();await expect(d).toHaveCount(0);
+  const saved=await page.evaluate(()=>window.__courseState.tables.at(-1));expect(saved.periodGroups).toEqual({morning:2,afternoon:2,evening:0});expect(saved.lessonMinutes).toBe(50);expect(saved.periods[0]).toEqual({start:'08:05',end:'08:52'});
+  await page.reload();await page.getByRole('button',{name:'管理课表',exact:true}).click();await page.getByRole('button',{name:'修改名称、学期与作息'}).click();await expect(page.getByLabel('每节课时长（分钟）')).toHaveValue('50');await expect(page.getByLabel('晚上上课节数')).toHaveValue('0');
+});
+
+test('adding a morning period remaps afternoon courses and rejects removing an occupied period',async({page})=>{
+  const state=fixture(),t=state.tables[0];t.periodGroups={morning:2,afternoon:2,evening:0};t.lessonMinutes=45;t.periods[2]={start:'14:00',end:'14:45'};t.periods[3]={start:'15:00',end:'15:45'};t.courses[0].start=3;t.courses[0].end=4;
+  await app(page,state);await page.getByRole('button',{name:'管理课表'}).click();await page.getByRole('button',{name:'修改名称、学期与作息'}).click();let d=page.locator('dialog[open]').last();await d.getByLabel('上午上课节数').selectOption('3');await d.getByRole('button',{name:'下一步：设置作息'}).click();await d.getByLabel('第3节上课时间',{exact:true}).fill('10:00');await d.getByRole('button',{name:'下一组',exact:true}).click();await d.getByRole('button',{name:'保存课表',exact:true}).click();await expect(d).toHaveCount(0);
+  const saved=await page.evaluate(()=>window.__courseState.tables[0]);expect(saved.courses[0]).toMatchObject({start:4,end:5});expect(saved.periods[3].start).toBe('14:00');
+  await page.getByRole('button',{name:'管理课表'}).click();await page.getByRole('button',{name:'修改名称、学期与作息'}).click();d=page.locator('dialog[open]').last();await d.getByLabel('下午上课节数').selectOption('1');await d.getByRole('button',{name:'下一步：设置作息'}).click();await d.getByRole('button',{name:'保存课表',exact:true}).click();await expect(d.locator('[role=alert]')).toContainText('仍有课程');expect((await page.evaluate(()=>window.__courseState.tables[0])).periods).toHaveLength(5);
+});
+
+test('tapping a weekly class edits shared identity and can delete just one meeting with its exceptions',async({page})=>{
+  const state=fixture(),t=state.tables[0];t.courses.push({...t.courses[0],id:'second',day:3,room:'B102'});t.changes.push({courseId:'fixture-course',date:'2026-10-26',type:'move',targetDate:'2026-10-27',start:1,end:2,room:'C303'});
+  await app(page,state);await page.locator('.course-block').first().click();await page.getByRole('button',{name:'修改课程',exact:true}).click();let d=page.locator('dialog[open]').last();await d.locator('[name=name]').fill('运筹学A');await d.getByRole('button',{name:'保存课程',exact:true}).click();await expect(d).toHaveCount(0);expect((await page.evaluate(()=>window.__courseState.tables[0].courses)).map(c=>c.name)).toEqual(['运筹学A','运筹学A']);
+  await page.locator('.course-block').first().click();await page.getByRole('button',{name:'删除课程',exact:true}).click();d=page.locator('dialog[open]').last();await d.getByRole('button',{name:'确认删除',exact:true}).click();await expect(page.locator('dialog[open]')).toHaveCount(0);await expect(page.locator('.course-block')).toHaveCount(1);
+  const saved=await page.evaluate(()=>window.__courseState.tables[0]);expect(saved.courses.map(c=>c.id)).toEqual(['second']);expect(saved.changes).toEqual([]);await page.reload();await expect(page.locator('.course-row')).toHaveCount(1);
+});
+
+test('whole-course deletion keeps same-name classes taught by someone else',async({page})=>{
+  const state=fixture(),t=state.tables[0];t.courses.push({...t.courses[0],id:'second',day:3},{...t.courses[0],id:'other-teacher',teacher:'李老师',day:5});await app(page,state);
+  await page.getByRole('button',{name:'管理课程',exact:true}).click();await page.getByRole('button',{name:'打开编辑与删除',exact:true}).click();await page.getByRole('button',{name:'删除课程',exact:true}).click();const d=page.locator('dialog[open]').last();await d.locator('[name=scope]').selectOption('all');await d.getByRole('button',{name:'确认删除',exact:true}).click();await expect(page.locator('dialog[open]')).toHaveCount(0);expect((await page.evaluate(()=>window.__courseState.tables[0].courses)).map(c=>c.id)).toEqual(['other-teacher']);
+});
+
+test('old inline screenshot drafts migrate atomically and editing no longer rewrites image blobs',async({page})=>{
+  await app(page);
+  await page.evaluate(async()=>{
+    const canvas=document.createElement('canvas');canvas.width=canvas.height=40;const x=canvas.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,40,40);const blob=await new Promise(r=>canvas.toBlob(r));
+    await new Promise(resolve=>{const r=indexedDB.open('shike-course-drafts',1);r.onupgradeneeded=()=>r.result.createObjectStore('drafts');r.onsuccess=()=>{const db=r.result,tx=db.transaction('drafts','readwrite');tx.objectStore('drafts').put({targetId:'fixture-table',mode:'auto',stage:'review',courseIndex:0,meetingIndex:0,sources:[{id:'legacy-image',name:'旧版课程.png',file:new File([blob],'旧版课程.png',{type:'image/png',lastModified:12345}),status:'done',items:[{name:'旧草稿课程',teacher:'',room:'A101',day:2,start:1,end:2,weeks:[1,2],selected:true,warnings:[]}]}]},'import');tx.oncomplete=()=>{db.close();resolve();};};});
+  });
+  await page.getByRole('button',{name:'识别课表截图',exact:true}).first().click();await expect(page.locator('.course-candidates [name=name]')).toHaveValue('旧草稿课程');await page.locator('.course-candidates [name=name]').fill('旧草稿课程修改');
+  await expect.poll(()=>page.evaluate(()=>new Promise(resolve=>{const r=indexedDB.open('shike-course-drafts');r.onsuccess=()=>{const db=r.result,tx=db.transaction(['drafts','images']),draft=tx.objectStore('drafts').get('import'),file=tx.objectStore('images').get('import/legacy-image');tx.oncomplete=()=>{resolve({version:db.version,inline:!!draft.result.sources[0].file,name:draft.result.sources[0].items[0].name,modified:file.result?.lastModified});db.close();};};}))).toEqual({version:2,inline:false,name:'旧草稿课程修改',modified:12345});
+  await page.reload();await page.getByRole('button',{name:'识别课表截图',exact:true}).first().click();await page.getByRole('button',{name:'对照原图',exact:true}).click();await expect.poll(()=>page.locator('.course-original').evaluate(img=>img.naturalWidth)).toBe(40);await page.locator('.course-original-dialog [aria-label="关闭窗口"]').click();await page.getByRole('button',{name:'确认并保存课程',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>new Promise(resolve=>{const r=indexedDB.open('shike-course-drafts');r.onsuccess=()=>{const db=r.result,tx=db.transaction(['drafts','images']),draft=tx.objectStore('drafts').count(),images=tx.objectStore('images').count();tx.oncomplete=()=>{resolve([draft.result,images.result]);db.close();};};}))).toEqual([0,0]);
 });

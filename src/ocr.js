@@ -8,11 +8,29 @@ let activeJob;
 let idleSession;
 let idleTimer;
 const cancelledError = () => new Error('已取消识别。');
+async function pixelKey(canvas,kind) {
+  const bytes=canvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,canvas.width,canvas.height).data;
+  const digest=await crypto.subtle.digest('SHA-256',bytes);
+  return `${kind}:${canvas.width}:${canvas.height}:${Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('')}`;
+}
+function cachePut(cache,key,value) {
+  cache.delete(key);cache.set(key,value);
+  if(cache.size>256)cache.delete(cache.keys().next().value);
+}
+async function recognizeNumber(worker,canvas,job) {
+  const cache=job.session.numberCache ||= new Map(),key=await pixelKey(canvas,'number');
+  if(cache.has(key)){job.cacheHits++;return cache.get(key);}
+  if(job.cancelled)throw cancelledError();
+  const result=await worker.recognize(canvas);job.recognitions++;
+  if(job.cancelled)throw cancelledError();
+  cachePut(cache,key,result);return result;
+}
 function disposeSession(session) {
   if (!session) return;
   session.disposed = true;
   session.worker?.terminate().catch(() => {});
   session.numericWorker?.terminate().catch(() => {});
+  session.cellCache?.clear();session.numberCache?.clear();
 }
 function releaseIdleWorker() {
   clearTimeout(idleTimer);
@@ -211,7 +229,8 @@ async function refineDateLines(worker, canvas, data, job, onProgress) {
 
 export async function recognizeImage(file, onProgress = () => {}, { accuracy = 'stable', layout = false } = {}) {
   cancelOCR();
-  const job = { cancelled: false, session: null, canvas: null, rejectCancel: null, onProgress, layout };
+  const started=performance.now();
+  const job = { cancelled: false, session: null, canvas: null, rejectCancel: null, onProgress, layout,cacheHits:0,recognitions:0 };
   activeJob = job;
   const cancellation = new Promise((_, reject) => { job.rejectCancel = reject; });
   let timer;
@@ -245,14 +264,19 @@ export async function recognizeImage(file, onProgress = () => {}, { accuracy = '
           job.session.numericWorker=numeric;
         }
         const numeric=job.session.numericWorker;
+        const cellCache=job.session.cellCache ||= new Map();
         await numeric.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'0123456789-,/'});
         for(let i=0;i<atlas.packed.length;i++){
           if(job.cancelled)throw cancelledError();
           const entry=atlas.packed[i],crop=document.createElement('canvas');crop.width=entry.width+32;crop.height=entry.height+32;
           const ctx=crop.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,crop.width,crop.height);ctx.drawImage(atlas.canvas,entry.x,entry.y,entry.width,entry.height,16,16,entry.width,entry.height);
-          await worker.setParameters({tessedit_pageseg_mode:['name','time'].includes(entry.kind)?PSM.SINGLE_BLOCK:PSM.SINGLE_LINE,tessedit_char_whitelist:entry.kind==='time'?'0123456789-,/|第周星期一二三四五六日天单双节()':''});
           try{
+            const key=await pixelKey(crop,entry.kind);
+            if(cellCache.has(key)){texts.set(entry.cell,cellCache.get(key));job.cacheHits++;continue;}
+            if(job.cancelled)throw cancelledError();
+            if(entry.kind!=='code')await worker.setParameters({tessedit_pageseg_mode:['name','time'].includes(entry.kind)?PSM.SINGLE_BLOCK:PSM.SINGLE_LINE,tessedit_char_whitelist:entry.kind==='time'?'0123456789-,/|第周星期一二三四五六日天单双节()':''});
             const {data}=await (entry.kind==='code'?numeric:worker).recognize(crop,{}, {text:true,blocks:entry.kind==='time'});
+            job.recognitions++;
             let value=data.text.replace(/\s/g,'');
             if(entry.kind==='time'){
               const lines=(data.blocks||[]).flatMap(b=>b.paragraphs.flatMap(p=>p.lines));
@@ -263,7 +287,7 @@ export async function recognizeImage(file, onProgress = () => {}, { accuracy = '
                     const group=[word];while(wi+1<line.words.length&&/^[\d,-]+$/.test(line.words[wi+1].text))group.push(line.words[++wi]);text=group.map(w=>w.text).join('');
                     const left=Math.max(0,Math.min(...group.map(w=>w.bbox.x0))),top=Math.max(0,Math.min(...group.map(w=>w.bbox.y0))),right=Math.min(crop.width,Math.max(...group.map(w=>w.bbox.x1))),bottom=Math.min(crop.height,Math.max(...group.map(w=>w.bbox.y1)));
                     const check=document.createElement('canvas');check.width=right-left+16;check.height=bottom-top+16;const ctx=check.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,check.width,check.height);ctx.drawImage(crop,left,top,right-left,bottom-top,8,8,right-left,bottom-top);
-                    try{const result=await numeric.recognize(check);const number=result.data.text.replace(/\s/g,'').replace(/^[/|]+|[/|]+$/g,'');const values=(number.match(/\d+/g)||[]).map(Number);if(result.data.confidence>=65&&/^\d{1,2}(?:[-,]\d{1,2})*[-,]?$/.test(number)&&values.every(n=>n>=1&&n<=(periodLine?20:60))&&(!periodLine||values.length<2||values[1]>=values[0])&&(number.match(/-/g)||[]).length===(text.match(/-/g)||[]).length&&(number.match(/,/g)||[]).length===(text.match(/,/g)||[]).length)text=number;}finally{check.width=check.height=1;}
+                    try{const result=await recognizeNumber(numeric,check,job);const number=result.data.text.replace(/\s/g,'').replace(/^[/|]+|[/|]+$/g,'');const values=(number.match(/\d+/g)||[]).map(Number);if(result.data.confidence>=65&&/^\d{1,2}(?:[-,]\d{1,2})*[-,]?$/.test(number)&&values.every(n=>n>=1&&n<=(periodLine?20:60))&&(!periodLine||values.length<2||values[1]>=values[0])&&(number.match(/-/g)||[]).length===(text.match(/-/g)||[]).length&&(number.match(/,/g)||[]).length===(text.match(/,/g)||[]).length)text=number;}finally{check.width=check.height=1;}
                   }
                   parts.push(text);
                 }
@@ -281,6 +305,8 @@ export async function recognizeImage(file, onProgress = () => {}, { accuracy = '
               }
             }
             texts.set(entry.cell,value);
+            if(job.cancelled)throw cancelledError();
+            cachePut(cellCache,key,value);
           }finally{crop.width=crop.height=1;}
           job.onProgress('正在读取课程名称与上课安排',.35+.6*(i+1)/atlas.packed.length);
         }
@@ -309,7 +335,7 @@ export async function recognizeImage(file, onProgress = () => {}, { accuracy = '
   try {
     const result = await Promise.race([work(), cancellation, new Promise((_, reject) => { timer = setTimeout(() => { job.cancelled = true; reject(new Error('识别用时较长，请裁剪截图后重试，或直接粘贴通知文字。')); }, 180000); })]);
     succeeded = !job.cancelled;
-    return result;
+    return {...result,elapsedMs:Math.round(performance.now()-started),cacheHits:job.cacheHits,recognitions:job.recognitions};
   } finally {
     clearTimeout(timer);
     if (job.canvas) { job.canvas.width = 1; job.canvas.height = 1; }

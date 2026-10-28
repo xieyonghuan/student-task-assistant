@@ -56,6 +56,12 @@ final class CourseEngine {
             require(first.getDayOfWeek().getValue() == 1 && first.getYear() >= 2000 && first.getYear() <= 2200, "开学日期应为第一教学周的星期一。");
             int maxWeek = number(t, "maxWeeks", 1, 60);
             JSONArray periods = t.getJSONArray("periods"); require(periods.length() > 0 && periods.length() <= 20, "请设置 1 至 20 节作息。");
+            if (t.has("lessonMinutes")) number(t, "lessonMinutes", 5, 180);
+            if (t.has("periodGroups")) {
+                JSONObject groups = t.getJSONObject("periodGroups");
+                int total = number(groups, "morning", 0, 20) + number(groups, "afternoon", 0, 20) + number(groups, "evening", 0, 20);
+                require(total == periods.length(), "各时段节数之和应与作息总节数一致。");
+            }
             LocalTime previous = LocalTime.MIN;
             for (int p = 0; p < periods.length(); p++) {
                 JSONObject period = periods.getJSONObject(p);

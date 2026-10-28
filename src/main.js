@@ -114,7 +114,7 @@ function render() {
         ${navItem('home', '首页', 'home', null)}
         ${native ? navItem('timetable', '课程表', 'calendar', null) : ''}
         ${navItem('all', '全部待办', 'grid', n.all)}${navItem('upcoming', '即将截止', 'clock', n.upcoming)}${navItem('overdue', '已逾期', 'alert', n.overdue)}${navItem('undated', '暂无截止日期', 'inbox', n.undated)}
-        <div class="nav-divider"></div>${navItem('completed', '已完成', 'circle', n.completed)}
+        ${native ? '' : `<div class="nav-divider"></div>${navItem('completed', '已完成', 'circle', n.completed)}`}
       </nav>
       ${native ? `<div class="sidebar-bottom native-sidebar-status" title="离线识别资源已内置">${icon('shield')}<span>离线识别资源已内置</span></div>` : `<div class="sidebar-bottom"><div class="offline-card"><span class="status-dot ${state.offlineReady ? 'ready' : ''}"></span><strong>${state.offlineReady ? '离线资源已就绪' : '准备你的离线空间'}</strong><p>${state.offlineReady ? '识别与任务管理，无需联网' : '首次准备后，断网也能识别'}</p><button class="text-button" data-action="settings">${state.offlineReady ? '管理本地数据' : '准备离线使用'} ${icon('arrow')}</button></div><button class="nav-item settings-nav" data-action="settings" aria-label="设置与帮助">${icon('settings')}<span>设置与帮助</span></button><div class="sidebar-foot">只留在你的设备上 ${icon('shield')}</div></div>`}
     </aside>
@@ -122,7 +122,7 @@ function render() {
       ${native ? '<div class="native-content">' : ''}<section class="page-heading"><div><p class="eyebrow">${esc(date)}</p><h1>${page.title}</h1><p class="page-subtitle">${page.subtitle}</p></div>${isImportView(state.view) ? `<button class="button button-light" data-action="exit-import">${icon('close')} 退出添加</button>` : state.view === 'timetable' ? `<button class="button button-light" data-view="home">返回首页</button>` : state.view === 'home' ? `<button class="button button-light" data-view="all">${icon('calendar')} 查看全部待办</button>` : `<button class="button button-light" data-action="add">${icon('plus')} 手动添加</button>`}</section>
       ${state.storageError ? '<div class="error-banner" role="alert">无法打开本地存储。请退出无痕模式、检查存储空间后重新打开。本次无法保存任务。</div>' : ''}
       ${state.calendarError ? `<div class="error-banner" role="alert">任务已保存在拾课中，日历尚未同步：${esc(state.calendarError)} <button class="text-button" data-action="calendar">检查日历同步</button></div>` : ''}
-      ${state.view === 'home' ? draftBanner() : ''}${renderLearningPage(state, n, icon, esc)}
+      ${state.view === 'home' ? draftBanner() : ''}${native && state.view === 'all' ? `<div class="task-completed-top"><button class="button button-light" data-view="completed">${icon('check')} 已完成 <span data-count="completed">${n.completed}</span></button></div>` : ''}${renderLearningPage(state, n, icon, esc)}
 
 
       ${native ? `</div>${state.view === 'home' ? `<footer class="native-footer"><div class="native-utility"><span class="privacy-badge">${icon('shield')} 本地私密存储</span><button class="button button-light" data-action="settings" aria-label="打开设置">${icon('settings')}<span>设置与帮助</span></button></div></footer>` : ''}` : `<footer class="workspace-foot"><span>${icon('shield')} 安心学习，数据只属于你</span><span>拾课 · 学习任务助手</span></footer>`}

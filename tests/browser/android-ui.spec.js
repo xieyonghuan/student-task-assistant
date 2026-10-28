@@ -78,7 +78,7 @@ test('Android tablet settings is available only at home across task and import r
   await page.setViewportSize({ width: 800, height: 1280 });
   await android(page);
   for (const view of ['all', 'upcoming', 'overdue', 'undated', 'completed']) {
-    await page.locator(`.sidebar [data-view="${view}"]`).click();
+    if(view==='completed'){await page.locator('.sidebar [data-view=all]').click();await page.locator('.task-completed-top [data-view=completed]').click();}else await page.locator(`.sidebar [data-view="${view}"]`).click();
     await expect(page.locator('[data-action="settings"]')).toHaveCount(0);
     await expect(page.locator('.native-footer')).toHaveCount(0);
   }

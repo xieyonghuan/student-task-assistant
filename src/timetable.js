@@ -4,6 +4,7 @@ import { parseTimetableLayout, dedupeCourses, parseWeeks, formatWeeks, DAYS } fr
 import './timetable.css';
 import {tableWizardHTML,bindTableWizard} from './course-periods.js';
 import {openCourseImport} from './course-import.js';
+import {scheduleSettings,remapPeriodRange} from './course-schedule.js';
 
 const clone = obj => structuredClone(obj);
 const iso = date => new Date(date).toISOString().slice(0, 10);
@@ -53,6 +54,7 @@ export function createTimetable({ openDialog, esc, toast }) {
     tableId = state.tables.some(t=>t.id===tableId) ? tableId : state.tables[0]?.id || '';
     const [week, permissions] = await Promise.all([tableId ? nativeCall('courseWeek', { tableId, from }) : { occurrences: [] }, nativeCall('courseReminderStatus')]);
     if (token !== loadToken) return;
+    try { localStorage.setItem('shike-viewed-course-table',tableId); } catch { /* Viewing preferences do not affect native course data. */ }
     events = week.occurrences || []; status = permissions; render();
   }
   async function load() {
@@ -68,7 +70,7 @@ export function createTimetable({ openDialog, esc, toast }) {
   }
   function render() {
     const t = table();
-    element.innerHTML = `<div class="course-toolbar glass"><div class="course-switch"><label>当前查看<select id="course-table-select" aria-label="切换课表">${state.tables.map(item=>`<option value="${esc(item.id)}" ${item.id===tableId?'selected':''}>${esc(item.name)}${state.primaryId===item.id?' · 提醒课表':''}</option>`).join('')}</select></label><button class="button button-light" data-course="new-table">新建课表</button>${t?'<button class="button button-light" data-course="manage">管理课表</button>':''}</div><div class="course-actions">${t?'<button class="button button-primary" data-course="ocr">识别课表截图</button><button class="button button-light" data-course="add">添加课程</button>':''}<button class="button button-light" data-course="reminders">上课提醒</button></div></div>
+    element.innerHTML = `<div class="course-toolbar glass"><div class="course-switch"><label>当前查看<select id="course-table-select" aria-label="切换课表">${state.tables.map(item=>`<option value="${esc(item.id)}" ${item.id===tableId?'selected':''}>${esc(item.name)}${state.primaryId===item.id?' · 提醒课表':''}</option>`).join('')}</select></label><button class="button button-light" data-course="new-table">新建课表</button>${t?'<button class="button button-light" data-course="manage">管理课表</button>':''}</div><div class="course-actions">${t?'<button class="button button-primary" data-course="ocr">识别课表截图</button><button class="button button-light" data-course="add">添加课程</button><button class="button button-light" data-course="manage-courses">管理课程</button>':''}<button class="button button-light" data-course="reminders">上课提醒</button></div></div>
       <div class="course-reminder-summary ${state.reminders && (!status.granted || !status.exact || status.error)?'course-warning':''}" role="status">${esc(reminderText())}</div>
       ${!t ? `<section class="course-empty glass"><span class="course-eyebrow">课程与时间，都安排好</span><h2>建一份自己的课程表</h2><p>先设置第一教学周和作息，再识别截图或手动添加课程。支持多份课表与单次调课。</p><button class="button button-primary" data-course="new-table">创建第一份课表</button></section>` : `
       <div class="course-week-bar"><button class="button button-light" data-course="prev" aria-label="上一周">‹</button><div><strong>${weekLabel(t)}</strong><span>${esc(from)} — ${esc(plus(from,6))}</span></div><button class="button button-light" data-course="next" aria-label="下一周">›</button><button class="text-button" data-course="today">回到本周</button></div>
@@ -97,6 +99,7 @@ export function createTimetable({ openDialog, esc, toast }) {
       const fields=wizard.value(),date=fields.firstMonday;
       if(monday(date)!==date)throw new Error('请选择第一教学周的星期一。');
       const value={...clone(t),...fields};
+      if(existing){const oldGroups=scheduleSettings(t).periodGroups;for(const c of value.courses)Object.assign(c,remapPeriodRange(c.start,c.end,oldGroups,fields.periodGroups));for(const c of value.changes)if(c.type==='move')Object.assign(c,remapPeriodRange(c.start,c.end,oldGroups,fields.periodGroups));}
       const next=clone(state);
       if(existing) next.tables[next.tables.findIndex(x=>x.id===t.id)]=value;
       else {value.id=newId();value.courses=[];value.changes=[];next.tables.push(value);tableId=value.id;from=date;}
@@ -113,22 +116,37 @@ export function createTimetable({ openDialog, esc, toast }) {
     return `<label>课程名称<input name="name${suffix}" maxlength="120" required value="${esc(c.name)}"></label><div class="course-form-row"><label>教师<input name="teacher${suffix}" maxlength="120" value="${esc(c.teacher)}"></label><label>地点<input name="room${suffix}" maxlength="160" value="${esc(c.room)}"></label></div><div class="course-form-row three"><label>星期<select name="day${suffix}">${DAYS.map((d,i)=>`<option value="${i}" ${+c.day===i?'selected':''}>${d}</option>`).join('')}</select></label><label>开始节次<input name="start${suffix}" type="number" min="0" max="20" value="${c.start||0}"></label><label>结束节次<input name="end${suffix}" type="number" min="0" max="20" value="${c.end||0}"></label></div><label>上课周次<input name="weeks${suffix}" placeholder="1-16，或 1-16(单)、2,4,8-12" value="${esc(typeof c.weeks==='string'?c.weeks:formatWeeks(c.weeks))}"></label><small class="course-hint">范围 1–${maxWeeks} 周。星期、节次或周次留空/为 0 时，作为待补全课程保存，不提醒。</small>`;
   }
   function readCourse(form, old={}) {
-    return {...old,name:String(form.get('name')||'').trim(),teacher:String(form.get('teacher')||'').trim(),room:String(form.get('room')||'').trim(),day:+form.get('day'),start:+form.get('start'),end:+form.get('end'),weeks:parseWeeks(form.get('weeks'),table().maxWeeks),notes:String(form.get('notes')||old.notes||'').slice(0,2000)};
+    return {...old,name:String(form.get('name')||'').trim(),teacher:String(form.get('teacher')||'').trim(),room:String(form.get('room')||'').trim(),day:+form.get('day'),start:+form.get('start'),end:+form.get('end'),weeks:parseWeeks(form.get('weeks'),table().maxWeeks),notes:String(form.has('notes')?form.get('notes'):old.notes||'').slice(0,2000)};
+  }
+  const coursePeers=(t,c)=>t.courses.filter(x=>x.name===c.name&&(x.teacher||'')===(c.teacher||''));
+  function removeCourse(id,after=()=>{}) {
+    const t=table(),c=t.courses.find(c=>c.id===id);if(!c)return;const peers=coursePeers(t,c);
+    const dialog=openDialog('删除课程安排？',c.name,`<form class="course-form"><label>删除范围<select name="scope"><option value="one">仅这一条上课安排</option>${peers.length>1?`<option value="all">这门课程的全部 ${peers.length} 条安排</option>`:''}</select></label><p>所选安排及其调课记录、上课提醒会一并移除。其他课程不受影响。</p><p class="course-form-error" role="alert"></p><div class="course-dialog-actions"><button type="button" class="button button-light" id="keep-course">保留课程</button><button type="submit" class="button button-danger">确认删除</button></div></form>`);
+    $('#keep-course',dialog).onclick=()=>dialog.close();$('form',dialog).onsubmit=event=>{event.preventDefault();runForm(dialog,async()=>{
+      const ids=new Set(($('select',dialog).value==='all'?peers:[c]).map(c=>c.id)),next=clone(state),target=next.tables.find(t=>t.id===tableId);
+      target.courses=target.courses.filter(c=>!ids.has(c.id));target.changes=target.changes.filter(c=>!ids.has(c.courseId));await save(next);dialog.close();after();toast(`已删除 ${ids.size} 条上课安排，提醒已更新。`);
+    });};
+  }
+  function manageCourses() {
+    const t=table();if(!t.courses.length){editCourse();return;}
+    const dialog=openDialog('管理课程','选择上课安排后可修改课程，或删除一条 / 整门课的全部安排。',`<form class="course-form"><label>课程与上课安排<select name="courseId">${t.courses.map(c=>`<option value="${esc(c.id)}">${esc(c.name)} · ${DAYS[c.day]} · ${c.start?`第${c.start}—${c.end}节`:'待补全'} · ${formatWeeks(c.weeks)}周</option>`).join('')}</select></label><button class="button button-primary" type="submit">打开编辑与删除</button></form>`);
+    $('form',dialog).onsubmit=e=>{e.preventDefault();const id=$('select',dialog).value;dialog.close();editCourse(id);};
   }
   function editCourse(id) {
     const t=table(), original=t.courses.find(c=>c.id===id);
-    const c=original||{id:newId(),name:'',teacher:'',room:'',day:1,start:1,end:2,weeks:Array.from({length:t.maxWeeks},(_,i)=>i+1),notes:''};
-    const dialog=openDialog(original?'编辑课程':'添加课程','此处编辑整学期安排；某一次调课请点击周课表中的课程。',`<form class="course-form" id="course-editor">${courseFields(c,t.maxWeeks)}<label>备注<textarea name="notes" maxlength="2000" rows="3">${esc(c.notes)}</textarea></label><p class="course-form-error" role="alert"></p><div class="course-dialog-actions"><button type="submit" class="button button-primary">保存课程</button>${original?'<button type="button" class="text-button" id="course-delete">删除课程</button>':''}</div></form>`);
-    const form=$('#course-editor',dialog);
+    const c=original||{id:newId(),name:'',teacher:'',room:'',day:1,start:1,end:Math.min(2,t.periods.length),weeks:Array.from({length:t.maxWeeks},(_,i)=>i+1),notes:''};
+    const peers=original?coursePeers(t,c):[];
+    const dialog=openDialog(original?'编辑课程':'添加课程','修改学期重复安排；仅调整一次上课请使用周课表中的调课功能。',`<form class="course-form" id="course-editor"><div class="course-flow-scroll">${peers.length>1?`<label>本课程上课安排<select id="edit-course-meeting">${peers.map(x=>`<option value="${esc(x.id)}" ${x.id===id?'selected':''}>${DAYS[x.day]} · 第${x.start}—${x.end}节 · ${formatWeeks(x.weeks)}周 · ${esc(x.room)}</option>`).join('')}</select></label>`:''}${courseFields(c,t.maxWeeks)}${peers.length>1?`<label class="course-checkbox"><input type="checkbox" name="syncIdentity" checked>名称和教师同步到本课程全部 ${peers.length} 条安排</label>`:''}<label>备注<textarea name="notes" maxlength="2000" rows="2">${esc(c.notes)}</textarea></label><p class="course-form-error" role="alert"></p></div><div class="course-flow-footer"><button type="submit" class="button button-primary">保存课程</button>${original?'<button type="button" class="text-button" id="course-delete">删除课程</button>':''}</div></form>`);
+    dialog.classList.add('native-flow-screen','course-edit-screen');
+    const form=$('#course-editor',dialog);let dirty=false;form.addEventListener('input',e=>{if(e.target.id!=='edit-course-meeting')dirty=true;});
+    $('#edit-course-meeting',dialog)?.addEventListener('change',e=>{const nextId=e.target.value;if(dirty){e.target.value=id;$('.course-form-error',dialog).textContent='请先保存当前修改，再切换上课安排。';return;}dialog.close();editCourse(nextId);});
     form.onsubmit=event=>{event.preventDefault();runForm(dialog,async()=>{
       const value=readCourse(new FormData(form),c);if(!value.name)throw new Error('请填写课程名称。');
       const next=clone(state),target=next.tables.find(t=>t.id===tableId);
-      if(original)target.courses[target.courses.findIndex(x=>x.id===id)]=value;else target.courses.push(value);
+      if(original){target.courses[target.courses.findIndex(x=>x.id===id)]=value;if(form.elements.syncIdentity?.checked){const ids=new Set(peers.map(c=>c.id));target.courses.forEach(c=>{if(ids.has(c.id)){c.name=value.name;c.teacher=value.teacher;}});}}else target.courses.push(value);
       await save(next);dialog.close();toast('课程已保存。');
     });};
-    $('#course-delete',dialog)?.addEventListener('click',()=>confirmAction('删除这门课程？','该课程的全部上课安排、调课记录与提醒都会移除。',async()=>{
-      const next=clone(state),target=next.tables.find(t=>t.id===tableId);target.courses=target.courses.filter(c=>c.id!==id);target.changes=target.changes.filter(c=>c.courseId!==id);await save(next);dialog.close();
-    }));
+    $('#course-delete',dialog)?.addEventListener('click',()=>removeCourse(id,()=>dialog.close()));
   }
   function confirmAction(title,message,action) {
     const dialog=openDialog(title,'',`<form class="course-form"><p>${esc(message)}</p><p class="course-form-error" role="alert"></p><button type="submit" class="button button-primary">确认</button></form>`);
@@ -148,7 +166,9 @@ export function createTimetable({ openDialog, esc, toast }) {
   }
   function changeOccurrence(key) {
     const event=events.find(e=>e.key===key);if(!event)return;
-    const t=table();const dialog=openDialog(event.name,`${event.date} · 第 ${event.start}–${event.end} 节 · ${event.room||'未填写地点'}`,`<form class="course-form" id="course-change"><p class="course-hint">仅修改原定 ${esc(event.originalDate)} 的这一次课，不改变其他周，也不向学校提交申请。</p><label>操作<select name="type"><option value="move">调课 / 修改地点</option><option value="cancel">本次停课</option></select></label><div class="course-change-target"><label>调至日期<input name="targetDate" type="date" required value="${event.date}"></label><div class="course-form-row"><label>开始节次<input name="start" type="number" min="1" max="${t.periods.length}" value="${event.start}" required></label><label>结束节次<input name="end" type="number" min="1" max="${t.periods.length}" value="${event.end}" required></label></div><label>地点<input name="room" maxlength="160" value="${esc(event.room)}"></label></div><p class="course-form-error" role="alert"></p><button type="submit" class="button button-primary">保存本次变更</button></form>`);
+    const t=table();const dialog=openDialog(event.name,`${event.date} · 第 ${event.start}–${event.end} 节 · ${event.room||'未填写地点'}`,`<form class="course-form" id="course-change"><div class="course-occurrence-tools"><button type="button" class="button button-light" id="occurrence-edit">修改课程</button><button type="button" class="text-button" id="occurrence-delete">删除课程</button></div><p class="course-hint">仅修改原定 ${esc(event.originalDate)} 的这一次课，不改变其他周，也不向学校提交申请。</p><label>操作<select name="type"><option value="move">调课 / 修改地点</option><option value="cancel">本次停课</option></select></label><div class="course-change-target"><label>调至日期<input name="targetDate" type="date" required value="${event.date}"></label><div class="course-form-row"><label>开始节次<input name="start" type="number" min="1" max="${t.periods.length}" value="${event.start}" required></label><label>结束节次<input name="end" type="number" min="1" max="${t.periods.length}" value="${event.end}" required></label></div><label>地点<input name="room" maxlength="160" value="${esc(event.room)}"></label></div><p class="course-form-error" role="alert"></p><button type="submit" class="button button-primary">保存本次变更</button></form>`);
+    $('#occurrence-edit',dialog).onclick=()=>{dialog.close();editCourse(event.courseId);};
+    $('#occurrence-delete',dialog).onclick=()=>removeCourse(event.courseId,()=>dialog.close());
     const form=$('form',dialog);form.elements.type.onchange=()=>{const cancel=form.elements.type.value==='cancel';$('.course-change-target',dialog).hidden=cancel;$('.course-change-target',dialog).querySelectorAll('input').forEach(i=>i.disabled=cancel);};
     form.onsubmit=e=>{e.preventDefault();runForm(dialog,async()=>{
       const f=new FormData(form),change={courseId:event.courseId,date:event.originalDate,type:f.get('type')};
@@ -188,7 +208,7 @@ export function createTimetable({ openDialog, esc, toast }) {
     const b=event.target.closest('[data-course]');if(!b)return;
     run(async()=>{
       switch(b.dataset.course){
-        case 'new-table':tableForm();break;case 'manage':manage();break;case 'add':editCourse();break;case 'edit':editCourse(b.dataset.id);break;
+        case 'new-table':tableForm();break;case 'manage':manage();break;case 'manage-courses':manageCourses();break;case 'add':editCourse();break;case 'edit':editCourse(b.dataset.id);break;
         case 'ocr':await openImport();break;case 'reminders':reminders();break;case 'backup':await backup();break;
         case 'prev':from=plus(from,-7);await refresh();break;case 'next':from=plus(from,7);await refresh();break;case 'today':from=monday(today());await refresh();break;
         case 'occurrence':changeOccurrence(b.dataset.key);break;
