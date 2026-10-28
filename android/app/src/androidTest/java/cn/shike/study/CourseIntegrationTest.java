@@ -81,15 +81,17 @@ public class CourseIntegrationTest {
         table.getJSONArray("periods").getJSONObject(0).put("end", "08:50");
         table.getJSONArray("courses").getJSONObject(0).put("end", 1);
         JSONObject saved = store.replace(state, original.getLong("revision"));
+        String savedSnapshot = saved.toString();
         JSONObject loaded = CourseEngine.table(new CourseStore(context).read(), "table-test");
         assertEquals(50, loaded.getInt("lessonMinutes")); assertEquals(0, loaded.getJSONObject("periodGroups").getInt("evening"));
         JSONObject occurrence = CourseEngine.occurrences(loaded, LocalDate.parse("2026-10-26"), LocalDate.parse("2026-10-26")).getJSONObject(0);
         assertEquals(50 * 60000L, occurrence.getLong("finish") - occurrence.getLong("begin"));
         table.getJSONObject("periodGroups").put("afternoon", 1);
         try { store.replace(state, saved.getLong("revision")); fail("Group total must match periods"); } catch (IllegalArgumentException expected) { }
-        assertEquals(saved.toString(), store.read().toString());
+        assertEquals(savedSnapshot, store.read().toString());
         table.getJSONObject("periodGroups").put("afternoon", 0); table.put("lessonMinutes", 0);
         try { store.replace(state, saved.getLong("revision")); fail("Invalid lesson duration must fail"); } catch (IllegalArgumentException expected) { }
+        assertEquals(savedSnapshot, store.read().toString());
     }
     @Test public void changedRulesCannotLeaveOrphanedExceptions() throws Exception {
         JSONObject state = fixture(), table = CourseEngine.table(state, "table-test");
