@@ -32,10 +32,14 @@ jobs:
         run: |
           set -euo pipefail
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BUILD_RUN}" > build-run.json
+          gh api "repos/${GITHUB_REPOSITORY}/compare/${BUILD_COMMIT}...${GITHUB_SHA}" > publication-diff.json
           node --input-type=module <<'JS'
           import fs from 'node:fs';
           const run=JSON.parse(fs.readFileSync('build-run.json','utf8'));
           if(run.head_sha!==process.env.BUILD_COMMIT || run.conclusion!=='success')throw Error('Build was not successfully tested');
+          const diff=JSON.parse(fs.readFileSync('publication-diff.json','utf8'));
+          const allowed=new Set(['.github/workflows/development-apk.yml','release-development/signature-v2.0.0.json']);
+          if(diff.status!=='ahead' || !Array.isArray(diff.files) || diff.files.length>2 || diff.files.some(file=>!allowed.has(file.filename)))throw Error('Publication commit changes the tested app');
           JS
           gh run download "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --name android-unsigned-review --dir reviewed-build
       - name: Reconstruct the locally signed APK and verify its exact bytes
@@ -74,4 +78,4 @@ jobs:
 
           已验证源码：40fb9e62c76d2d54b0c7aeefe607718e88d89a3c；测试运行：https://github.com/xieyonghuan/student-task-assistant/actions/runs/40678108312 。稳定版和网页不更新。
           NOTES
-          gh release create v2.0.0-dev.2 development-release/shike-v2.0.0-dev.2.apk development-release/shike-v2.0.0-dev.2.sha256 --repo "$GITHUB_REPOSITORY" --target "$BUILD_COMMIT" --prerelease --latest=false --title '拾课 v2.0.0 开发版 2' --notes-file development-notes.md
+          gh release create v2.0.0-dev.2 development-release/shike-v2.0.0-dev.2.apk development-release/shike-v2.0.0-dev.2.sha256 --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title '拾课 v2.0.0 开发版 2' --notes-file development-notes.md
