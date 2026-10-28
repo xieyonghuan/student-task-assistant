@@ -102,7 +102,8 @@ function listColumns(lines) {
   }
   return dedupeCourses(result);
 }
-export function parseTimetableLayout({ lines = [], text = '' }, mode = 'auto') {
+export function parseTimetableLayout({ lines = [], text = '', table }, mode = 'auto') {
+  if(table?.kind==='urp-list')return parseCourseCells(table);
   const usable = lines.filter(l => l.text?.trim() && l.bbox && Object.values(l.bbox).every(Number.isFinite));
   const listed = mode !== 'grid' ? listColumns(usable) : null;
   if (listed) return { items: listed, layout: 'list', warnings: ['已按课程列表的列位置提取，请核对跨行内容。'] };
@@ -151,4 +152,59 @@ export function parseTimetableLayout({ lines = [], text = '' }, mode = 'auto') {
     }
   }
   return { items: dedupeCourses(items), layout: 'grid', warnings: labels.length < 2 ? ['节次栏没有读全，请逐项补充；未填写的安排不会提醒。'] : ['表格位置推测需要核对；未标明的周次会留空。'] };
+}
+
+export function parseCourseCells(table) {
+  const items=[];
+  for(const row of table.rows||[]){
+    const code=normalize(row.code).replace(/\D/g,'');
+    if(/课程[名号]/.test(row.name)&&!code)continue;
+    const named=/^\d{6,12}$/.test(code)&&/[\p{Script=Han}A-Za-z]{2}/u.test(row.name||'');
+    const name=named?normalize(row.name).replace(/\s/g,''):'';
+    const entries=(row.meetings||[]).filter(m=>/\d/.test(m.time));
+    if(!entries.length&&named)entries.push({time:'',room:''});
+    for(const meeting of entries){
+      const raw=normalize(meeting.time).replace(/[|]/g,'/').replace(/\s/g,''),item={name,courseCode:named?code:'',teacher:named?normalize(row.teacher).replace(/[＊*“”"'~`]/g,''):'',room:normalize(meeting.room).replace(/[|]/g,'/'),day:parseDay(raw),start:0,end:0,weeks:[],notes:raw,warnings:[],continuation:!named};
+      const week=raw.match(/^([^周]+)周/);
+      if(week)try{item.weeks=parseWeeks(week[1]);}catch{item.warnings.push('周次未能完整读取，请核对原图。');}
+      const period=raw.match(/(?:星期|周)[一二三四五六日天1-7][/]*(\d{1,2})(?:-(\d{1,2}))?(?:节)?$/);
+      if(period&&+period[1]>0&&+(period[2]||period[1])>=+period[1]&&+(period[2]||period[1])<=20){item.start=+period[1];item.end=+(period[2]||period[1]);}
+      if(!named)item.warnings.push('截图顶部为续行，需与同一课程的其他截图关联。');
+      items.push(item);
+    }
+  }
+  return {items,layout:'list',warnings:[]};
+}
+const meetingKey=item=>JSON.stringify([item.day,item.start,item.end,[...item.weeks].sort((a,b)=>a-b)]);
+const roomKey=room=>normalize(room).replace(/\s/g,'').match(/(?:[A-Za-z]\d{3,4}|\d{3,4})$/)?.[0]||normalize(room).replace(/\s/g,'');
+export function reconcileCourseSources(sources) {
+  const all=[];
+  sources.forEach((source,index)=>{
+    const parsed=source.table?parseCourseCells(source.table):parseTimetableLayout({lines:source.lines||[],text:source.text||''},source.textEdited?'list':source.mode||'auto');
+    source.warnings=parsed.warnings;source.items=[];
+    for(const item of parsed.items)all.push({...item,sourceIndex:index,selected:true});
+  });
+  const groups=new Map();
+  for(const item of all)if(item.name){const key=item.courseCode||item.name.replace(/\s/g,'');if(!groups.has(key))groups.set(key,[]);groups.get(key).push(item);}
+  for(const source of sources){
+    const orphans=all.filter(item=>item.sourceIndex===sources.indexOf(source)&&!item.name&&item.continuation);
+    if(!orphans.length)continue;
+    const matches=[...groups.values()].filter(group=>orphans.some(orphan=>orphan.day&&orphan.start&&orphan.weeks.length&&group.some(known=>meetingKey(orphan)===meetingKey(known)&&(!orphan.room||!known.room||roomKey(orphan.room)===roomKey(known.room)))));
+    if(matches.length===1){const group=matches[0],name=group[0].name,courseCode=group[0].courseCode;orphans.forEach(item=>{item.name=name;item.courseCode=courseCode;item.continuation=false;item.warnings=[];group.push(item);});}
+    else for(const item of orphans){item.name='待关联课程';item.courseCode='unlinked-'+item.sourceIndex;item.selected=false;source.warnings.push('有截图续行无法唯一关联课程，请在确认时补充名称，或与含完整课程名的截图一同识别。');}
+  }
+  for(const group of groups.values()){
+    const named=group.find(item=>item.teacher)||group[0];
+    for(const item of group){item.name=group[0].name;item.teacher=named.teacher;}
+  }
+  const seen=new Set();
+  for(const item of all){
+    if(!item.name)continue;
+    const same=all.filter(other=>other.name===item.name&&(other.courseCode||'')===(item.courseCode||''));
+    const full=other=>other.day>0&&other.start>0&&other.weeks.length>0;
+    if(!full(item)&&same.some(other=>full(other)&&(!item.day||item.day===other.day)&&(!item.start||item.start===other.start)&&(!item.weeks.length||formatWeeks(item.weeks)===formatWeeks(other.weeks))))continue;
+    const key=JSON.stringify([item.courseCode||item.name,meetingKey(item),roomKey(item.room)]);
+    if(seen.has(key))continue;seen.add(key);sources[item.sourceIndex].items.push(item);
+  }
+  return sources;
 }

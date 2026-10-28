@@ -171,6 +171,16 @@ public final class MainActivity extends Activity {
     }
     private void dispatch(String method, JSONObject args, Reply reply) throws Exception {
         switch (method) {
+            case "coursePickTime": {
+                String time=args.optString("time", "08:00");
+                int hour=8,minute=0;
+                if(time.matches("[0-2]?[0-9]:[0-5][0-9]")){String[] parts=time.split(":");hour=Math.min(23,Integer.parseInt(parts[0]));minute=Integer.parseInt(parts[1]);}
+                android.app.TimePickerDialog picker=new android.app.TimePickerDialog(this,android.app.AlertDialog.THEME_HOLO_LIGHT,
+                    (view,h,m)->{try{reply.send(new JSONObject().put("time",String.format(java.util.Locale.ROOT,"%02d:%02d",h,m)),null);}catch(Exception error){reply.send(null,error);}},hour,minute,true);
+                picker.setTitle(args.optString("title","选择上课时间"));
+                picker.setOnCancelListener(ignored->{try{reply.send(new JSONObject().put("cancelled",true),null);}catch(Exception error){reply.send(null,error);}});
+                picker.show();break;
+            }
             case "courseLoad": background(reply, () -> new CourseStore(this).read()); break;
             case "courseSave": background(reply, () -> {
                 JSONObject saved = new CourseStore(this).replace(args.getJSONObject("state"), args.getLong("revision"));
@@ -297,7 +307,7 @@ public final class MainActivity extends Activity {
     }
     WebView browserForTests() { return web; }
     @Override public void onBackPressed() {
-        web.evaluateJavascript("(() => { const d=document.querySelector('dialog[open]'); if(d){d.close();return true;} return false; })()", closed -> {
+        web.evaluateJavascript("(() => { const d=[...document.querySelectorAll('dialog[open]')].at(-1); if(d){if(typeof d.shikeBack==='function')return d.shikeBack();d.close();return true;} return false; })()", closed -> {
             if (!"true".equals(closed)) { if (web.canGoBack()) web.goBack(); else moveTaskToBack(true); }
         });
     }

@@ -2,6 +2,7 @@ import { createWorker, PSM } from 'tesseract.js';
 import { appURL } from './offline.js';
 import { validDate, normalizeNotice } from './domain.js';
 import { isNativeApp, nativeCall } from './native.js';
+import { courseTableAtlas, unpackCourseTable } from './course-table-image.js';
 
 let activeJob;
 let idleSession;
@@ -11,6 +12,7 @@ function disposeSession(session) {
   if (!session) return;
   session.disposed = true;
   session.worker?.terminate().catch(() => {});
+  session.numericWorker?.terminate().catch(() => {});
 }
 function releaseIdleWorker() {
   clearTimeout(idleTimer);
@@ -30,13 +32,16 @@ export function cancelOCR() {
 }
 
 async function workerFor(job) {
+  const language=job.layout?'chi_sim':'chi_sim+eng';
+  if(idleSession&&idleSession.language!==language)releaseIdleWorker();
   const session = idleSession || { worker: null, disposed: false };
+  session.language=language;
   idleSession = null;
   clearTimeout(idleTimer);
   session.job = job;
   job.session = session;
   if (!session.worker) {
-    const worker = await createWorker(['chi_sim', 'eng'], 1, {
+    const worker = await createWorker(job.layout ? 'chi_sim' : ['chi_sim', 'eng'], 1, {
       workerPath: appURL('ocr/worker.min.js'), corePath: appURL('ocr/core'), langPath: appURL('ocr/lang'),
       workerBlobURL: false, cacheMethod: 'none',
       errorHandler(error) {
@@ -100,6 +105,7 @@ async function imageCanvas(file, keepLayout = false) {
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
+  if (keepLayout) return canvas;
   const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
   let sample = 0, count = 0;
   for (let i = 0; i < pixels.data.length; i += 256) { sample += (pixels.data[i] + pixels.data[i + 1] + pixels.data[i + 2]) / 3; count++; }
@@ -205,7 +211,7 @@ async function refineDateLines(worker, canvas, data, job, onProgress) {
 
 export async function recognizeImage(file, onProgress = () => {}, { accuracy = 'stable', layout = false } = {}) {
   cancelOCR();
-  const job = { cancelled: false, session: null, canvas: null, rejectCancel: null, onProgress };
+  const job = { cancelled: false, session: null, canvas: null, rejectCancel: null, onProgress, layout };
   activeJob = job;
   const cancellation = new Promise((_, reject) => { job.rejectCancel = reject; });
   let timer;
@@ -228,6 +234,59 @@ export async function recognizeImage(file, onProgress = () => {}, { accuracy = '
     ]);
     job.canvas = canvas;
     if (job.cancelled) throw new Error('已取消识别。');
+    const atlas = layout ? courseTableAtlas(canvas) : null;
+    if (atlas) {
+      job.onProgress('正在按课程单元格读取名称与上课安排', .45);
+      try {
+        const texts=new Map();
+        if(!job.session.numericWorker){
+          const numeric=await createWorker('eng',1,{workerPath:appURL('ocr/worker.min.js'),corePath:appURL('ocr/core'),langPath:appURL('ocr/lang'),workerBlobURL:false,cacheMethod:'none'});
+          if(job.cancelled||job.session.disposed){await numeric.terminate();throw cancelledError();}
+          job.session.numericWorker=numeric;
+        }
+        const numeric=job.session.numericWorker;
+        await numeric.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'0123456789-,/'});
+        for(let i=0;i<atlas.packed.length;i++){
+          if(job.cancelled)throw cancelledError();
+          const entry=atlas.packed[i],crop=document.createElement('canvas');crop.width=entry.width+32;crop.height=entry.height+32;
+          const ctx=crop.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,crop.width,crop.height);ctx.drawImage(atlas.canvas,entry.x,entry.y,entry.width,entry.height,16,16,entry.width,entry.height);
+          await worker.setParameters({tessedit_pageseg_mode:['name','time'].includes(entry.kind)?PSM.SINGLE_BLOCK:PSM.SINGLE_LINE,tessedit_char_whitelist:entry.kind==='time'?'0123456789-,/|第周星期一二三四五六日天单双节()':''});
+          try{
+            const {data}=await (entry.kind==='code'?numeric:worker).recognize(crop,{}, {text:true,blocks:entry.kind==='time'});
+            let value=data.text.replace(/\s/g,'');
+            if(entry.kind==='time'){
+              const lines=(data.blocks||[]).flatMap(b=>b.paragraphs.flatMap(p=>p.lines));
+              const corrected=[];
+              for(const [li,line] of lines.entries()){const parts=[];const periodLine=/(?:星期|周)[一二三四五六日天]/.test(lines.slice(0,li+1).map(l=>l.text.replace(/\s/g,'')).join(''));
+                for(let wi=0;wi<line.words.length;wi++){const word=line.words[wi];let text=word.text;
+                  if(/^[\d,-]+$/.test(text)&&/\d/.test(text)){
+                    const group=[word];while(wi+1<line.words.length&&/^[\d,-]+$/.test(line.words[wi+1].text))group.push(line.words[++wi]);text=group.map(w=>w.text).join('');
+                    const left=Math.max(0,Math.min(...group.map(w=>w.bbox.x0))),top=Math.max(0,Math.min(...group.map(w=>w.bbox.y0))),right=Math.min(crop.width,Math.max(...group.map(w=>w.bbox.x1))),bottom=Math.min(crop.height,Math.max(...group.map(w=>w.bbox.y1)));
+                    const check=document.createElement('canvas');check.width=right-left+16;check.height=bottom-top+16;const ctx=check.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,check.width,check.height);ctx.drawImage(crop,left,top,right-left,bottom-top,8,8,right-left,bottom-top);
+                    try{const result=await numeric.recognize(check);const number=result.data.text.replace(/\s/g,'').replace(/^[/|]+|[/|]+$/g,'');const values=(number.match(/\d+/g)||[]).map(Number);if(result.data.confidence>=65&&/^\d{1,2}(?:[-,]\d{1,2})*[-,]?$/.test(number)&&values.every(n=>n>=1&&n<=(periodLine?20:60))&&(!periodLine||values.length<2||values[1]>=values[0])&&(number.match(/-/g)||[]).length===(text.match(/-/g)||[]).length&&(number.match(/,/g)||[]).length===(text.match(/,/g)||[]).length)text=number;}finally{check.width=check.height=1;}
+                  }
+                  parts.push(text);
+                }
+                corrected.push(parts.join(''));
+              }
+              if(corrected.length)value=corrected.join('');
+              const tail=value.match(/([/|])(\d+)(?:-(\d+))?节?$/);
+              const validPeriod=m=>m&&+m[2]>=1&&+(m[3]||m[2])>=+m[2]&&+(m[3]||m[2])<=20;
+              if(tail&&!validPeriod(tail)){
+                for(const mode of [PSM.SPARSE_TEXT,PSM.SINGLE_COLUMN]){
+                  await worker.setParameters({tessedit_pageseg_mode:mode,tessedit_char_whitelist:'0123456789-,/|第周星期一二三四五六日天单双节()'});
+                  const check=await worker.recognize(crop);const replacement=check.data.text.replace(/\s/g,'').match(/([/|])(\d+)(?:-(\d+))?节?$/);
+                  if(validPeriod(replacement)){value=value.slice(0,tail.index)+replacement[0];break;}
+                }
+              }
+            }
+            texts.set(entry.cell,value);
+          }finally{crop.width=crop.height=1;}
+          job.onProgress('正在读取课程名称与上课安排',.35+.6*(i+1)/atlas.packed.length);
+        }
+        return { text: [...texts.values()].join('\n'), table: unpackCourseTable(atlas,[],texts), lines: [], engine: 'local-table-cells', width: canvas.width, height: canvas.height };
+      } finally { atlas.canvas.width=atlas.canvas.height=1; }
+    }
     await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT, preserve_interword_spaces: '0', tessedit_char_whitelist: '' });
     const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true });
     const text = layout ? data.text : await refineDateLines(worker, canvas, data, job, onProgress);

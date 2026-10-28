@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseWeeks, formatWeeks, parseCourseList, parseTimetableLayout, dedupeCourses } from '../src/timetable-parse.js';
+import { parseWeeks, formatWeeks, parseCourseList, parseTimetableLayout, dedupeCourses, parseCourseCells, reconcileCourseSources } from '../src/timetable-parse.js';
 
 test('week ranges preserve odd/even and discontinuous weeks without inventing missing weeks', () => {
   assert.deepEqual(parseWeeks('1-8周(单),10-16周(双)'), [1,3,5,7,10,12,14,16]);
@@ -8,6 +8,19 @@ test('week ranges preserve odd/even and discontinuous weeks without inventing mi
   assert.deepEqual(parseWeeks(''), []);
   assert.equal(formatWeeks([1,2,3,6,8,9]),'1-3,6,8-9');
   for(const input of ['0-16','16-1','1-21','每周','1-16xxx','2(单)']) assert.throws(()=>parseWeeks(input,20));
+});
+
+test('row-spanned list cells keep every meeting and allow one-period lessons or unscheduled courses',()=>{
+  const table={kind:'urp-list',rows:[{code:'123456789',name:'控制课程A',teacher:'教师甲',meetings:[{time:'1-5,7-9周/星期一/3-4节',room:'主校区/A101'},{time:'13-14周/星期日/9',room:'实验室105'}]},{code:'123456790',name:'艺术课程',teacher:'教师乙',meetings:[{time:'3-16周',room:''}]}]};
+  const {items}=parseCourseCells(table);assert.equal(items.length,3);assert.deepEqual(items[0].weeks,[1,2,3,4,5,7,8,9]);assert.equal(items[0].start,3);assert.equal(items[1].start,9);assert.equal(items[1].end,9);assert.equal(items[1].day,7);assert.equal(items[2].day,0);assert.equal(items[2].start,0);
+});
+test('overlapping screenshots resolve a unique continuation regardless of selection order without inventing missing times',()=>{
+  const continuation={table:{kind:'urp-list',rows:[{code:'',name:'截断',meetings:[{time:'16-17周/星期一/1-4节',room:'实训基地'},{time:'16-17周/星期五/5-7节',room:'实训基地'}]}]}};
+  const named={table:{kind:'urp-list',rows:[{code:'222333444',name:'实训课程B',teacher:'教师甲',meetings:[{time:'16-17周/星期一/1-4节',room:'实训基地'},{time:'16-17周/星期',room:''}]}]}};
+  const sources=[continuation,named];reconcileCourseSources(sources);const items=sources.flatMap(s=>s.items);assert.equal(items.length,2);assert.ok(items.every(i=>i.name==='实训课程B'));assert.deepEqual(items.map(i=>i.day).sort(),[1,5]);assert.equal(items[1].teacher,'教师甲');
+});
+test('ambiguous clipped courses remain unselected instead of borrowing the preceding course name',()=>{
+  const sources=[{table:{kind:'urp-list',rows:[{code:'',name:'残字',meetings:[{time:'12周/星期二/1-2节',room:'A101'}]}]}}];reconcileCourseSources(sources);assert.equal(sources[0].items[0].name,'待关联课程');assert.equal(sources[0].items[0].selected,false);
 });
 
 test('structured course lists yield separate courses and retain multiple meetings of one course', () => {

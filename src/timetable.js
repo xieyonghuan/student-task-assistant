@@ -1,9 +1,9 @@
 import { nativeCall } from './native.js';
 import { newId } from './domain.js';
 import { parseTimetableLayout, dedupeCourses, parseWeeks, formatWeeks, DAYS } from './timetable-parse.js';
-import { courseDraft } from './timetable-drafts.js';
-import { recognizeImage, cancelOCR } from './ocr.js';
 import './timetable.css';
+import {tableWizardHTML,bindTableWizard} from './course-periods.js';
+import {openCourseImport} from './course-import.js';
 
 const clone = obj => structuredClone(obj);
 const iso = date => new Date(date).toISOString().slice(0, 10);
@@ -34,7 +34,7 @@ function laneEvents(events) {
 export function createTimetable({ openDialog, esc, toast }) {
   const element = document.createElement('div'); element.className = 'timetable-root';
   let state, tableId = '', from = monday(today()), events = [], status = {}, busy = false, loadToken = 0;
-  let importDialog, importBusy = false, draft, draftWrites = Promise.resolve();
+  let courseImport, openingCourseImport=false;
   const $ = (selector, root = element) => root.querySelector(selector);
   const table = () => state?.tables.find(t=>t.id===tableId);
   const run = async action => { try { await action(); } catch (error) { toast(error.message || '课程表操作未完成，请重试。', true); } };
@@ -74,12 +74,12 @@ export function createTimetable({ openDialog, esc, toast }) {
       <div class="course-week-bar"><button class="button button-light" data-course="prev" aria-label="上一周">‹</button><div><strong>${weekLabel(t)}</strong><span>${esc(from)} — ${esc(plus(from,6))}</span></div><button class="button button-light" data-course="next" aria-label="下一周">›</button><button class="text-button" data-course="today">回到本周</button></div>
       <section class="course-grid-scroll glass" aria-label="每周课程表"><div class="course-grid" style="--period-count:${t.periods.length}"><div class="course-time-column"><div class="course-day-heading">节次</div>${t.periods.map((p,i)=>`<div class="course-time"><b>${i+1}</b><small>${esc(p.start)}<br>${esc(p.end)}</small></div>`).join('')}</div>${Array.from({length:7},(_,i)=>{
         const date = plus(from,i), dayEvents = laneEvents(events.filter(e=>e.date===date).sort((a,b)=>a.start-b.start||a.end-b.end));
-        return `<div class="course-day ${date===today()?'is-today':''}"><div class="course-day-heading">${DAYS[i+1]}<small>${date.slice(5)}</small></div><div class="course-day-body">${t.periods.map(()=>'<div class="course-slot"></div>').join('')}${dayEvents.map(e=>`<button class="course-block color-${[...e.courseId].reduce((sum,c)=>sum+c.charCodeAt(0),0)%6}" data-course="occurrence" data-key="${esc(e.key)}" style="top:${(e.start-1)*90+3}px;height:${(e.end-e.start+1)*90-6}px;left:calc(${e.lane/e.lanes*100}% + 2px);width:calc(${100/e.lanes}% - 4px)" aria-label="${esc(e.name)} ${date} 第${e.start}至${e.end}节"><strong>${esc(e.name)}</strong>${e.room?`<span>${esc(e.room)}</span>`:''}<small>${e.changed?'已调课 · ':''}${e.start}–${e.end} 节</small>${e.lanes>1?'<small>同日有重叠安排，请核对</small>':''}</button>`).join('')}</div></div>`;
+        return `<div class="course-day ${date===today()?'is-today':''}"><div class="course-day-heading">${DAYS[i+1]}<small>${date.slice(5)}</small></div><div class="course-day-body">${t.periods.map(()=>'<div class="course-slot"></div>').join('')}${dayEvents.map(e=>`<button class="course-block color-${[...e.courseId].reduce((sum,c)=>sum+c.charCodeAt(0),0)%6}" data-course="occurrence" data-key="${esc(e.key)}" style="top:calc(var(--course-slot-height) * ${e.start-1} + 3px);height:calc(var(--course-slot-height) * ${e.end-e.start+1} - 6px);left:calc(${e.lane/e.lanes*100}% + 2px);width:calc(${100/e.lanes}% - 4px)" aria-label="${esc(e.name)} ${date} 第${e.start}至${e.end}节"><strong>${esc(e.name)}</strong>${e.room?`<span>${esc(e.room.split('/').filter(Boolean).at(-1))}</span>`:''}<small>${e.changed?'已调课 · ':''}${e.start}–${e.end} 节</small>${e.lanes>1?'<small>时间重叠</small>':''}</button>`).join('')}</div></div>`;
       }).join('')}</div></section>
-      <div class="course-list-heading"><h2>全部课程安排 <small>${t.courses.length}</small></h2><p>点课程编辑学期安排；点周课表中的课程调整某一次上课。</p></div>
+      <details class="course-all"><summary>查看全部课程与待补全安排 · ${t.courses.length} 项</summary><div class="course-list-heading"><h2>全部课程安排 <small>${t.courses.length}</small></h2><p>点课程编辑学期安排；点周课表中的课程调整某一次上课。</p></div>
       <section class="course-arrangements">${t.courses.length?t.courses.map(c=>`<button class="course-row glass" data-course="edit" data-id="${esc(c.id)}"><strong>${esc(c.name)}</strong><span>${courseReady(c)?`${DAYS[c.day]} · 第 ${c.start}–${c.end} 节 · ${formatWeeks(c.weeks)} 周`:'待补全 · 不安排提醒'}</span><small>${esc([c.room,c.teacher].filter(Boolean).join(' · ')) || '编辑课程详情'}</small></button>`).join(''):'<div class="course-empty glass"><h3>这份课表还没有课程</h3><p>可以一次选择多张课程列表或课程表截图，核对后统一保存。</p><button class="button button-primary" data-course="ocr">识别课表截图</button></div>'}</section>
       ${t.changes.length?`<section class="course-changes glass"><h3>调课与停课记录</h3>${t.changes.map((change,i)=>`<div><span>${esc(t.courses.find(c=>c.id===change.courseId)?.name)} · ${esc(change.date)} → ${change.type==='cancel'?'停课':`${esc(change.targetDate)} 第${change.start}–${change.end}节`}</span><button class="text-button" data-course="undo-change" data-index="${i}">撤销</button></div>`).join('')}</section>`:''}`}
-      <div class="course-backup-actions"><button class="text-button" data-course="backup">备份课程表</button><label class="text-button">恢复课程表备份<input id="course-restore" type="file" accept="application/json,.json" hidden></label></div>`;
+      </details><div class="course-backup-actions"><button class="text-button" data-course="backup">备份课程表</button><label class="text-button">恢复课程表备份<input id="course-restore" type="file" accept="application/json,.json" hidden></label></div>`;
     $('#course-table-select')?.addEventListener('change', event=>run(async()=>{tableId=event.target.value;try{localStorage.setItem('shike-viewed-course-table',tableId);}catch{} await refresh();}));
     $('#course-restore')?.addEventListener('change', event=>run(()=>restoreBackup(event.target.files[0])));
   }
@@ -89,11 +89,14 @@ export function createTimetable({ openDialog, esc, toast }) {
   }
   function tableForm(existing) {
     const t = existing || { name:'我的课表',firstMonday:'',maxWeeks:20,periods:initialPeriods.map(p=>({start:p.slice(0,5),end:p.slice(6)})) };
-    const dialog = openDialog(existing?'课表设置':'新建课表','第一教学周日期和作息直接决定课程位置与提醒时间。',`<form id="course-table-form" class="course-form"><label>课表名称<input name="name" required maxlength="80" value="${esc(t.name)}"></label><div class="course-form-row"><label>第一教学周的星期一<input name="firstMonday" type="date" required value="${t.firstMonday}"></label><label>学期周数<input name="maxWeeks" type="number" min="1" max="60" required value="${t.maxWeeks}"></label></div><label>作息时间（每行一节）<textarea name="periods" rows="9" required>${t.periods.map(p=>`${p.start}-${p.end}`).join('\n')}</textarea></label><p class="course-hint">预填作息仅为示例，请按学校实际时间修改。所有课程按北京时间计算。已有调课记录与新设置不兼容时，需要先撤销对应调课。</p><p class="course-form-error" role="alert"></p><button type="submit" class="button button-primary">保存课表</button></form>`);
+    const dialog = openDialog(existing?'课表设置':'新建课表','基本信息 → 每节作息',tableWizardHTML(t));
+    dialog.classList.add('native-flow-screen','period-wizard');
+    const wizard=bindTableWizard(dialog,t,nativeCall);
     $('#course-table-form',dialog).onsubmit = event=>{event.preventDefault();runForm(dialog,async()=>{
-      const f = new FormData(event.target), date=String(f.get('firstMonday'));
+      if(!wizard.advance())return;
+      const fields=wizard.value(),date=fields.firstMonday;
       if(monday(date)!==date)throw new Error('请选择第一教学周的星期一。');
-      const value={...clone(t),name:String(f.get('name')).trim(),firstMonday:date,maxWeeks:+f.get('maxWeeks'),periods:periodsFromText(String(f.get('periods')))};
+      const value={...clone(t),...fields};
       const next=clone(state);
       if(existing) next.tables[next.tables.findIndex(x=>x.id===t.id)]=value;
       else {value.id=newId();value.courses=[];value.changes=[];next.tables.push(value);tableId=value.id;from=date;}
@@ -173,69 +176,13 @@ export function createTimetable({ openDialog, esc, toast }) {
     const data=JSON.parse(await file.text());if(data.format!=='shike-course-backup'||data.version!==1||!Array.isArray(data.state?.tables))throw new Error('请选择拾课课程表备份；作业备份请在首页设置中恢复。');
     confirmAction('恢复课程表备份？',`将替换本机的 ${state.tables.length} 份课表，恢复 ${data.state.tables.length} 份课表。原有作业任务不受影响。提醒默认关闭，请核对后重新开启。`,async()=>{const next=data.state;next.reminders=false;await save(next);});
   }
-  async function persistDraft() { const snapshot=clone(draft);draftWrites=draftWrites.catch(()=>{}).then(()=>courseDraft('put',snapshot));return draftWrites; }
   async function openImport() {
-    if(importDialog?.open)return;
-    draft=await courseDraft('get')||{sources:[],mode:'auto',targetId:tableId};draft.targetId=state.tables.some(t=>t.id===draft.targetId)?draft.targetId:tableId;
-    draft.sources.forEach(s=>{if(s.status==='running')s.status='waiting';});
-    importDialog=openDialog('识别课程表截图','支持课程列表和周课表。识别完成后核对星期、节次与周次，再统一保存。','<div id="course-import-host"></div>',{wide:true,onClose:()=>{if(importBusy)cancelOCR();importBusy=false;importDialog=null;}});
-    renderImport();
-  }
-  function renderImport() {
-    if(!importDialog?.open)return;
-    const host=$('#course-import-host',importDialog),total=draft.sources.reduce((n,s)=>n+(s.items?.length||0),0);
-    host.innerHTML=`<div class="course-import-options course-form"><label>保存到课表<select id="course-import-target" ${importBusy?'disabled':''}>${state.tables.map(t=>`<option value="${esc(t.id)}" ${t.id===draft.targetId?'selected':''}>${esc(t.name)}</option>`).join('')}</select></label><label>截图类型<select id="course-import-mode" ${importBusy?'disabled':''}><option value="auto" ${draft.mode==='auto'?'selected':''}>自动判断</option><option value="grid" ${draft.mode==='grid'?'selected':''}>周课表（保留星期、节次栏）</option><option value="list" ${draft.mode==='list'?'selected':''}>课程列表 / 选课结果</option></select></label></div>
-      <div class="course-dialog-actions"><label class="button button-primary">选择课表截图<input id="course-images" type="file" accept="image/*" multiple hidden ${importBusy?'disabled':''}></label><button class="button button-light" id="course-import-run" ${importBusy?'disabled':''}>${draft.sources.some(s=>s.status!=='done')?'开始 / 继续识别':'重新解析文字'}</button>${importBusy?'<button class="text-button" id="course-import-stop">暂停识别</button>':''}<button class="text-button" id="course-import-clear" ${importBusy?'disabled':''}>清空本次草稿</button></div>
-      <p class="course-hint">原图与识别结果只保存在本机草稿中。刷新或退出后可继续；成功保存后自动清理。相同的课程、时间、周次和地点会去重，同一门课的不同上课时段会保留。</p><p id="course-ocr-progress" role="status">${importBusy?'正在识别，请稍候':`已提取 ${total} 个候选安排，核对后保存。`}</p>
-      <div class="course-source-list">${draft.sources.map((source,index)=>`<details class="course-source glass" ${source.status!=='done'?'open':''}><summary>${esc(source.name)} · ${source.status==='done'?`${source.items?.length||0} 个候选`:source.status==='error'?'识别未完成':source.status==='running'?'正在识别':'待识别'}</summary>${source.file?`<img class="course-source-preview" data-source-image="${index}" alt="${esc(source.name)}原图">`:''}${source.error?`<p class="course-warning">${esc(source.error)}</p>`:''}<label>识别文字（可修改后重新解析）<textarea rows="5" data-source-text="${index}" ${importBusy?'disabled':''}>${esc(source.text||'')}</textarea></label>${(source.warnings||[]).map(w=>`<p class="course-warning">${esc(w)}</p>`).join('')}${!importBusy?`<button class="text-button" data-source-remove="${index}">移除这张截图</button>`:''}</details>`).join('')}</div>
-      <form id="course-import-confirm" class="course-form"><div class="course-candidates">${draft.sources.flatMap((s,si)=>(s.items||[]).map((c,ci)=>`<fieldset data-source="${si}" data-item="${ci}" ${importBusy?'disabled':''}><legend><label class="course-checkbox"><input type="checkbox" name="selected" ${c.selected!==false?'checked':''}>${esc(c.name||'待补充课程')} <small>${esc(s.name)}</small></label></legend>${courseFields(c,state.tables.find(t=>t.id===draft.targetId)?.maxWeeks||60)}${(c.warnings||[]).map(w=>`<p class="course-warning">${esc(w)}</p>`).join('')}</fieldset>`)).join('')}</div><label class="course-checkbox"><input type="checkbox" name="checked" required ${importBusy?'disabled':''}>我已对照原图核对；未补全的课程作为待排课程保存，不提醒</label><p class="course-form-error" role="alert"></p><button type="submit" class="button button-primary" ${importBusy||!total?'disabled':''}>确认并保存课程</button></form>`;
-    const urls=[];host.querySelectorAll('[data-source-image]').forEach(img=>{const url=URL.createObjectURL(draft.sources[+img.dataset.sourceImage].file);urls.push(url);img.src=url;img.onload=()=>URL.revokeObjectURL(url);});
-    $('#course-import-target',host).onchange=e=>{draft.targetId=e.target.value;run(async()=>{await persistDraft();renderImport();});};
-    $('#course-import-mode',host).onchange=e=>{draft.mode=e.target.value;run(persistDraft);};
-    $('#course-images',host).onchange=e=>run(async()=>{
-      const files=[...e.target.files];if(draft.sources.length+files.length>10)throw new Error('一次最多识别 10 张截图。');
-      if(files.some(f=>f.size>20000000))throw new Error('单张截图超过 20 MB，请裁剪后再试。');
-      for(const file of files)draft.sources.push({id:newId(),name:file.name,file,status:'waiting',text:'',items:[]});await persistDraft();renderImport();await processImages();
-    });
-    $('#course-import-run',host).onclick=()=>run(async()=>{
-      if(draft.sources.some(s=>s.status!=='done'))await processImages();
-      else {for(const source of draft.sources){const parsed=parseTimetableLayout({lines:source.lines||[],text:source.text},source.textEdited?'list':draft.mode);source.items=parsed.items.map(c=>({...c,selected:true}));source.warnings=parsed.warnings;}await persistDraft();renderImport();}
-    });
-    $('#course-import-stop',host)?.addEventListener('click',()=>{cancelOCR();});
-    $('#course-import-clear',host).onclick=()=>confirmAction('清空课程表识别草稿？','将删除本次截图和候选结果，已保存课程不会改变。',async()=>{await courseDraft('delete');draft={sources:[],mode:'auto',targetId:tableId};renderImport();});
-    host.querySelectorAll('[data-source-remove]').forEach(button=>button.onclick=()=>run(async()=>{draft.sources.splice(+button.dataset.sourceRemove,1);await persistDraft();renderImport();}));
-    host.querySelectorAll('[data-source-text]').forEach(input=>input.oninput=()=>{const s=draft.sources[+input.dataset.sourceText];s.text=input.value;s.textEdited=true;run(persistDraft);});
-    host.querySelectorAll('.course-candidates fieldset').forEach(field=>{
-      const selected=field.querySelector('[name="selected"]');
-      const disableUnselected=()=>field.querySelectorAll('input:not([name="selected"]),select').forEach(input=>input.disabled=!selected.checked);
-      disableUnselected();
-      field.addEventListener('input',()=>{
-        const c=draft.sources[+field.dataset.source].items[+field.dataset.item];for(const name of ['name','teacher','room','day','start','end','weeks'])c[name]=field.querySelector(`[name="${name}"]`).value;c.selected=selected.checked;disableUnselected();run(persistDraft);
-      });
-    });
-    $('#course-import-confirm',host).onsubmit=e=>{e.preventDefault();runForm(importDialog,async()=>{
-      const target=state.tables.find(t=>t.id===draft.targetId);if(!target)throw new Error('请选择目标课表。');
-      const imported=[];
-      for(const source of draft.sources)for(const row of source.items||[]){if(row.selected===false)continue;const c={id:newId(),name:row.name.trim(),teacher:row.teacher.trim(),room:row.room.trim(),day:+row.day,start:+row.start,end:+row.end,weeks:typeof row.weeks==='string'?parseWeeks(row.weeks,target.maxWeeks):row.weeks,notes:row.notes||''};if(!c.name)throw new Error('请补充已选课程的名称。');imported.push(c);}
-      if(!imported.length)throw new Error('请至少选择一项课程。');
-      const next=clone(state),saved=next.tables.find(t=>t.id===target.id),before=saved.courses.length;saved.courses=dedupeCourses([...saved.courses,...imported]);
-      const added=saved.courses.length-before;tableId=target.id;await save(next);await draftWrites;await courseDraft('delete');importDialog.close();toast(`已保存 ${added} 个安排，合并 ${imported.length-added} 个重复项。`);
-    });};
-  }
-  async function processImages() {
-    if(importBusy)return;importBusy=true;renderImport();
-    try{
-      for(const source of draft.sources){
-        if(source.status==='done')continue;
-        source.status='running';source.error='';await persistDraft();renderImport();
-        try{
-          const result=await recognizeImage(source.file,(message,progress)=>{const el=importDialog&&$('#course-ocr-progress',importDialog);if(el)el.textContent=`${source.name} · ${message} ${Math.round(progress*100)}%`;},{layout:true});
-          const parsed=parseTimetableLayout(result,draft.mode);source.text=result.text;source.lines=result.lines;source.items=parsed.items.map(c=>({...c,selected:true}));source.warnings=parsed.warnings;source.status='done';source.textEdited=false;
-          if(!source.items.length)source.warnings.push('没有提取出课程，请修改文字、裁剪截图，或手动录入。');
-          await persistDraft();if(!importDialog?.open)break;
-        }catch(error){source.status='error';source.error=error.message;await persistDraft();break;}
-      }
-    }finally{importBusy=false;renderImport();}
+    if(openingCourseImport||courseImport?.dialog.open)return;openingCourseImport=true;
+    try{await courseImport?.settled();courseImport=await openCourseImport({tables:state.tables,targetId:tableId,openDialog,esc,courseFields,toast,commit:async(imported,targetId)=>{
+      const next=clone(state),target=next.tables.find(t=>t.id===targetId);if(!target)throw new Error('目标课表不存在，请重新打开。');
+      const before=target.courses.length;target.courses=dedupeCourses([...target.courses,...imported.map(c=>({id:newId(),name:c.name,teacher:c.teacher,room:c.room,day:c.day,start:c.start,end:c.end,weeks:c.weeks,notes:c.notes||''}))]);
+      tableId=targetId;await save(next);toast('已保存 '+(target.courses.length-before)+' 个上课安排。');
+    }});}finally{openingCourseImport=false;}
   }
   element.addEventListener('click',event=>{
     const b=event.target.closest('[data-course]');if(!b)return;

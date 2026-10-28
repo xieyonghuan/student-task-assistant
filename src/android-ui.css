@@ -1,5 +1,22 @@
 .capture-title-compact { display: none; }
 
+/* Android surfaces share compact app typography, solid cards and consistent controls. */
+.native-app body { background:#f6f7f9;background-image:none; }
+.native-app .glass { background:#fff;backdrop-filter:none;box-shadow:none;border:1px solid #e8ebef; }
+.native-app .sidebar { border-radius:0;box-shadow:none;background:#fff; }
+.native-app .page-heading h1 { font-size:24px;letter-spacing:0; }
+.native-app .page-subtitle { font-size:12px;line-height:1.5; }
+.native-app .eyebrow { color:#8993a3;font-size:11px; }
+.native-app .button { box-shadow:none;border-radius:10px;min-height:44px; }
+.native-app .home-capture { grid-template-columns:minmax(0,1fr); }
+.native-app .home-capture .capture-art { display:none; }
+.native-app .home-capture .capture-copy { padding:20px; }
+.native-app .home-capture .capture-copy h2 { font-size:25px;line-height:1.4;letter-spacing:0; }
+.native-app .home-capture .capture-title-full { display:none; }
+.native-app .home-capture .capture-title-compact { display:inline; }
+.native-app .modal:not(.native-flow-screen) { background:#fff;border-radius:18px;box-shadow:0 12px 40px #1c2e4b26; }
+.native-app .task-card { border-radius:12px;box-shadow:none; }
+
 /* Android owns its system bars. Keep website installation chrome in the PWA. */
 .native-app .workspace { position: relative; display: flex; flex-direction: column; min-height: 100dvh; padding-top: 28px; }
 .native-app .workspace > * { flex-shrink: 0; }
