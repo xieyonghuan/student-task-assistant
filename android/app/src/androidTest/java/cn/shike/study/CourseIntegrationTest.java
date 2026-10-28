@@ -89,7 +89,7 @@ public class CourseIntegrationTest {
         table.put("firstMonday", next.toString()); state.put("reminders", true);
         store.replace(state, store.read().getLong("revision"));
         CourseAlarms alarms = new CourseAlarms(context); alarms.rebuild();
-        assertTrue(alarms.status().getBoolean("granted")); assertEquals(3, alarms.status().getInt("scheduled"));
+        assertTrue(alarms.status().getBoolean("granted")); assertEquals(alarms.status().toString(), 3, alarms.status().getInt("scheduled"));
         JSONObject event = CourseEngine.occurrences(table, next, next.plusDays(6)).getJSONObject(0);
         String oldToken = CourseAlarms.token(event, 10);
         assertFalse(alarms.deliver(oldToken, event.getLong("begin") - 11 * 60000));

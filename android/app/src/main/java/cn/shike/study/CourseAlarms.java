@@ -43,9 +43,11 @@ final class CourseAlarms {
     }
     boolean exact() { return Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms(); }
     JSONObject status() throws Exception {
-        String error = prefs.getString("error", "");
-        return new JSONObject().put("granted", granted()).put("exact", exact())
-            .put("scheduled", prefs.getStringSet("scheduled", Collections.emptySet()).size()).put("error", error);
+        synchronized (CourseStore.LOCK) {
+            String error = prefs.getString("error", "");
+            return new JSONObject().put("granted", granted()).put("exact", exact())
+                .put("scheduled", prefs.getStringSet("scheduled", Collections.emptySet()).size()).put("error", error);
+        }
     }
     private PendingIntent pending(String action, String token) {
         Intent intent = new Intent(context, CourseAlarmReceiver.class).setAction(action)
