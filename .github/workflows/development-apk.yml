@@ -17,8 +17,8 @@ jobs:
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
-      BUILD_RUN: '40645884051'
-      BUILD_COMMIT: '4bff1db3f0579974a42f4a4f2533258e92966d28'
+      BUILD_RUN: '40678108312'
+      BUILD_COMMIT: '40fb9e62c76d2d54b0c7aeefe607718e88d89a3c'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -52,24 +52,26 @@ jobs:
           const apk=applySignature(fs.readFileSync('reviewed-build/app-release-unsigned.apk'),patch);
           const hash=createHash('sha256').update(apk).digest('hex');
           if(apk.length!==patch.bytes || hash!==patch.signedSHA256)throw Error('Signed APK mismatch');
-          fs.writeFileSync('development-release/shike-v2.0.0-dev.1.apk',apk);
-          fs.writeFileSync('development-release/shike-v2.0.0-dev.1.sha256',hash+'  shike-v2.0.0-dev.1.apk\n');
+          fs.writeFileSync('development-release/shike-v2.0.0-dev.2.apk',apk);
+          fs.writeFileSync('development-release/shike-v2.0.0-dev.2.sha256',hash+'  shike-v2.0.0-dev.2.apk\n');
           JS
-          java -jar "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" verify --verbose --print-certs development-release/shike-v2.0.0-dev.1.apk > signature-check.txt
+          java -jar "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" verify --verbose --print-certs development-release/shike-v2.0.0-dev.2.apk > signature-check.txt
           expected="$(tr -d '\r\n' < android/signing-certificate.sha256)"
           grep -F "Signer #1 certificate SHA-256 digest: $expected" signature-check.txt
       - name: Publish a development prerelease without updating stable
         run: |
           set -euo pipefail
           cat > development-notes.md <<'NOTES'
-          拾课 v2.0.0 开发版 1，新增本地课程表与课程列表截图 OCR、多图确认去重、识别草稿恢复、多份课表、手动录入、调课和上课提醒。
+          拾课 v2.0.0 开发版 2，修复教务课程列表截图的合并单元格、多次上课安排及跨图续行识别。七张原图在本机真实识别为 11 门课程、34 条去重安排，其中 33 条有完整上课信息。原图及原始识别文字不上传仓库。
 
-          下载 shike-v2.0.0-dev.1.apk。沿用原签名，先在首页设置中导出任务备份，再覆盖安装，不要先卸载。Android 内部版本为 2.0.0 / 200。
+          下载 shike-v2.0.0-dev.2.apk。沿用原签名，先在首页设置中导出任务备份，再覆盖安装，不要先卸载。Android 内部版本为 2.0.0 / 201，可覆盖开发版 1。
 
-          课程表先填写第一教学周星期一和实际作息；预填作息只是示例。截图识别需人工核对星期、节次和周次，待补全课程不提醒。开启上课提醒后按需允许通知和准确提醒，默认提前 10 分钟。
+          创建课表先选择每天节数，再逐节填写上课、下课时间；支持手写及 Android 原生时间拨轮。识别完成自动进入逐门确认，同一课程的多个安排可切换核对，底部操作固定，草稿可恢复。收起长课程列表，紧凑显示完整七天周视图，减少长距离滚动。
 
-          Android 14/15 模拟器各 20 项测试通过，逻辑 51 项及界面 59 项通过；ColorOS 真机和实际学校课表截图仍需验收。本版不连接教务系统。
+          课程表先填写第一教学周星期一和实际作息；预填作息只是示例。只有周次而没有星期、节次的课程保留待补全，不猜测时间、不发提醒。上课提醒默认提前 10 分钟。本版不连接教务系统。
 
-          已验证源码：4bff1db3f0579974a42f4a4f2533258e92966d28；测试运行：https://github.com/xieyonghuan/student-task-assistant/actions/runs/40645884051 。稳定版和网页不更新。
+          Android 14/15 模拟器各 21 项测试通过；逻辑 54 项通过；完整界面回归 61 项通过、1 项旧截图样本缺失跳过。ColorOS 真机熄屏和省电策略仍需设备验收。
+
+          已验证源码：40fb9e62c76d2d54b0c7aeefe607718e88d89a3c；测试运行：https://github.com/xieyonghuan/student-task-assistant/actions/runs/40678108312 。稳定版和网页不更新。
           NOTES
-          gh release create v2.0.0-dev.1 development-release/shike-v2.0.0-dev.1.apk development-release/shike-v2.0.0-dev.1.sha256 --repo "$GITHUB_REPOSITORY" --target "$BUILD_COMMIT" --prerelease --latest=false --title '拾课 v2.0.0 开发版 1' --notes-file development-notes.md
+          gh release create v2.0.0-dev.2 development-release/shike-v2.0.0-dev.2.apk development-release/shike-v2.0.0-dev.2.sha256 --repo "$GITHUB_REPOSITORY" --target "$BUILD_COMMIT" --prerelease --latest=false --title '拾课 v2.0.0 开发版 2' --notes-file development-notes.md
