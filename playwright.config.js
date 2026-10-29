@@ -1,4 +1,7 @@
 import { defineConfig } from '@playwright/test';
+import { existsSync } from 'node:fs';
+
+const edgePath = process.env.SHIKE_BROWSER_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 
 export default defineConfig({
   testDir: './tests/browser',
@@ -11,6 +14,7 @@ export default defineConfig({
   use: {
     baseURL: process.env.TEST_URL || 'http://127.0.0.1:4173',
     channel: 'msedge',
+    launchOptions: existsSync(edgePath) ? { executablePath: edgePath } : {},
     headless: true,
     viewport: { width: 1440, height: 1000 },
     locale: 'zh-CN',

@@ -16,6 +16,7 @@ import { createCalendar } from './calendar.js';
 import { registerOffline, offlineStatus, prepareOffline } from './offline.js';
 import { isNativeApp, nativeCall } from './native.js';
 import { calendarStatus, setCalendarEnabled, syncCalendar } from './calendar-sync.js';
+import { createTimetable } from './timetable.js';
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -52,6 +53,7 @@ const paths = {
 };
 const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.book}</svg>`;
 const state = { tasks: [], view: readRoute(), query: '', offlineReady: false, resourceBytes: 0, storageError: false, calendarError: '' };
+const timetable = isNativeApp() ? createTimetable({ openDialog, esc, toast }) : null;
 try { state.sidebarCollapsed = localStorage.getItem('shike-sidebar-collapsed') === 'true'; }
 catch { state.sidebarCollapsed = false; }
 let importSession;
@@ -75,7 +77,7 @@ function counts() {
   return result;
 }
 function navItem(view, label, symbol, count) {
-  const active = state.view === view || (view === 'home' && isImportView(state.view));
+  const active = (isNativeApp() && view==='all' && ['upcoming','overdue','undated','completed'].includes(state.view)) || state.view === view || (view === 'home' && isImportView(state.view));
   return `<button class="nav-item ${active ? 'active' : ''}" data-view="${view}" title="${label}" aria-label="${label}${count === null ? '' : `，${count} 项`}" ${active ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span>${count === null ? '' : `<span class="nav-count">${count}</span>`}</button>`;
 }
 function applySidebarState() {
@@ -95,7 +97,7 @@ function render() {
   if (isImportView(state.view) && !importSession) { if (!openingImport && !receivingShare) startImport(); return; }
   if (state.view === 'review' && !importSession.canReview()) { history.replaceState(null, '', '#' + PAGES.capture.route); state.view = 'capture'; }
   const n = counts();
-  const page = PAGES[state.view];
+  const page = isNativeApp() && ['all','upcoming','overdue','undated','completed'].includes(state.view)?{...PAGES[state.view],title:'课程作业'}:PAGES[state.view];
   const native = isNativeApp();
   document.documentElement.classList.toggle('native-app', native);
   document.documentElement.classList.toggle('import-open', isImportView(state.view));
@@ -109,14 +111,12 @@ function render() {
   $('#app').innerHTML = `<div class="app-shell">
     <aside class="sidebar glass"><div class="sidebar-heading"><a class="brand" href="#/home" aria-label="拾课首页"><span class="brand-mark">${icon('book')}</span><span>拾课<small>STUDY SPACE</small></span></a>${native ? `<button class="icon-button sidebar-toggle" data-action="sidebar-toggle" aria-label="收起侧栏" aria-expanded="true" aria-controls="learning-navigation">${icon('panel')}</button>` : ''}</div>
       <p class="nav-caption">我的学习</p><nav id="learning-navigation" aria-label="任务分类">
-        ${navItem('home', '首页', 'home', null)}
-        ${navItem('all', '全部待办', 'grid', n.all)}${navItem('upcoming', '即将截止', 'clock', n.upcoming)}${navItem('overdue', '已逾期', 'alert', n.overdue)}${navItem('undated', '暂无截止日期', 'inbox', n.undated)}
-        <div class="nav-divider"></div>${navItem('completed', '已完成', 'circle', n.completed)}
+        ${native ? navItem('home','首页','home',null)+navItem('all','课程作业','grid',n.all)+navItem('timetable','课程表','calendar',null)+navItem('mine','我的','settings',null) : navItem('home','首页','home',null)+navItem('all','全部待办','grid',n.all)+navItem('upcoming','即将截止','clock',n.upcoming)+navItem('overdue','已逾期','alert',n.overdue)+navItem('undated','暂无截止日期','inbox',n.undated)+navItem('completed','已完成','circle',n.completed)}
       </nav>
       ${native ? `<div class="sidebar-bottom native-sidebar-status" title="离线识别资源已内置">${icon('shield')}<span>离线识别资源已内置</span></div>` : `<div class="sidebar-bottom"><div class="offline-card"><span class="status-dot ${state.offlineReady ? 'ready' : ''}"></span><strong>${state.offlineReady ? '离线资源已就绪' : '准备你的离线空间'}</strong><p>${state.offlineReady ? '识别与任务管理，无需联网' : '首次准备后，断网也能识别'}</p><button class="text-button" data-action="settings">${state.offlineReady ? '管理本地数据' : '准备离线使用'} ${icon('arrow')}</button></div><button class="nav-item settings-nav" data-action="settings" aria-label="设置与帮助">${icon('settings')}<span>设置与帮助</span></button><div class="sidebar-foot">只留在你的设备上 ${icon('shield')}</div></div>`}
     </aside>
     <main class="workspace" data-page="${state.view}">${native ? '' : `<header class="topbar"><span class="breadcrumb">我的学习空间 <span>/</span> ${page.title}</span><div class="topbar-actions"><span class="privacy-badge">${icon('shield')} 本地私密存储</span><button class="button button-light install-button" data-action="install" ${installed ? 'disabled' : ''}>${icon('download')}<span>${installed ? '已安装到桌面' : '安装到桌面'}</span></button><button class="avatar" data-action="settings" aria-label="打开设置">学</button></div></header>`}
-      ${native ? '<div class="native-content">' : ''}<section class="page-heading"><div><p class="eyebrow">${esc(date)}</p><h1>${page.title}</h1><p class="page-subtitle">${page.subtitle}</p></div>${isImportView(state.view) ? `<button class="button button-light" data-action="exit-import">${icon('close')} 退出添加</button>` : state.view === 'home' ? `<button class="button button-light" data-view="all">${icon('calendar')} 查看全部待办</button>` : `<button class="button button-light" data-action="add">${icon('plus')} 手动添加</button>`}</section>
+      ${native ? '<div class="native-content">' : ''}<section class="page-heading"><div><p class="eyebrow">${esc(date)}</p><h1>${page.title}</h1><p class="page-subtitle">${page.subtitle}</p></div>${isImportView(state.view) ? `<button class="button button-light" data-action="exit-import">${icon('close')} 退出添加</button>` : state.view === 'timetable' ? `<button class="button button-light" data-view="home">返回首页</button>` : state.view === 'home' ? `<button class="button button-light" data-view="all">${icon('calendar')} 查看全部待办</button>` : `<button class="button button-light" data-action="add">${icon('plus')} 手动添加</button>`}</section>
       ${state.storageError ? '<div class="error-banner" role="alert">无法打开本地存储。请退出无痕模式、检查存储空间后重新打开。本次无法保存任务。</div>' : ''}
       ${state.calendarError ? `<div class="error-banner" role="alert">任务已保存在拾课中，日历尚未同步：${esc(state.calendarError)} <button class="text-button" data-action="calendar">检查日历同步</button></div>` : ''}
       ${state.view === 'home' ? draftBanner() : ''}${renderLearningPage(state, n, icon, esc)}
@@ -133,7 +133,10 @@ function render() {
     if (contentScroll != null) $('.native-content').scrollTop = contentScroll;
   }
   renderTaskList();
-  if (native && state.view === 'home') {
+  if (state.view === 'timetable' && timetable) timetable.mount($('#timetable-page-host'));
+  if (native && state.view === 'home' && !document.querySelector('.native-home-card')) {
+    const courses = document.createElement('button'); courses.className = 'button button-light'; courses.dataset.view = 'timetable';
+    courses.innerHTML = icon('calendar') + ' 我的课程表'; $('.home-followup').append(courses);
     const button = document.createElement('button'); button.className = 'text-button'; button.dataset.action = 'receive-share';
     button.textContent = '接收 / 粘贴通知'; button.title = '接收系统分享，或提取已复制的文字'; $('.home-followup').append(button);
   }
@@ -193,7 +196,7 @@ function refreshTimedViews() {
   const n = counts();
   $$('.nav-item[data-view]').forEach(button => {
     const key = button.dataset.view;
-    if (key === 'home') return;
+    if (key === 'home' || key === 'timetable' || key==='mine') return;
     $('.nav-count', button).textContent = n[key];
     button.setAttribute('aria-label', `${PAGES[key].title}，${n[key]} 项`);
   });
@@ -613,6 +616,8 @@ document.addEventListener('click', event => {
     const { openVoiceInput } = await import('./voice-ui.js');
     await openVoiceInput({ openDialog, icon, onTextReady: text => startImport(false, text, 'voice') });
   });
+  else if (action === 'create-timetable') safely(async()=>{location.hash=PAGES.timetable.route;await timetable.createTable();});
+  else if (action === 'pin-course-widget') safely(async()=>{const r=await nativeCall('courseWidgetPin');toast(r.supported?'请在系统弹窗中确认添加。':'请长按桌面，在小组件列表中添加拾课课程表。');});
   else if (action === 'add') editTask();
   else if (action === 'edit') editTask(id);
   else if (action === 'export') safely(exportCalendar);
@@ -652,6 +657,7 @@ async function start() {
   shareReady = true;
   if (!state.storageError) await receiveInbox();
   if (!state.storageError) await syncSavedTasks();
+  timetable?.openTarget();
   try {
     await registerOffline();
     const status = await offlineStatus(); state.offlineReady = status.ready; state.resourceBytes = status.bytes; render();

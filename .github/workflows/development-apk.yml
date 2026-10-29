@@ -1,0 +1,83 @@
+name: Publish verified Android development APK
+on:
+  push:
+    branches: [feature/android-v2-timetable]
+    paths:
+      - '.github/workflows/development-apk.yml'
+      - 'release-development/signature-v2.0.0.json'
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: shike-development-apk-v2
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_RUN: '40824514752'
+      BUILD_COMMIT: '0f38cfaa9c6d44523308ed6284ea1de99bf25de6'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Retrieve only the tested unsigned build
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BUILD_RUN}" > build-run.json
+          gh api "repos/${GITHUB_REPOSITORY}/compare/${BUILD_COMMIT}...${GITHUB_SHA}" > publication-diff.json
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const run=JSON.parse(fs.readFileSync('build-run.json','utf8'));
+          if(run.head_sha!==process.env.BUILD_COMMIT || run.conclusion!=='success')throw Error('Build was not successfully tested');
+          const diff=JSON.parse(fs.readFileSync('publication-diff.json','utf8'));
+          const allowed=new Set(['.github/workflows/development-apk.yml','release-development/signature-v2.0.0.json']);
+          if(diff.status!=='ahead' || !Array.isArray(diff.files) || diff.files.length>2 || diff.files.some(file=>!allowed.has(file.filename)))throw Error('Publication commit changes the tested app');
+          JS
+          gh run download "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --name android-unsigned-review --dir reviewed-build
+      - name: Reconstruct the locally signed APK and verify its exact bytes
+        run: |
+          set -euo pipefail
+          mkdir -p development-release
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import {createHash} from 'node:crypto';
+          import {applySignature} from './scripts/apply-android-signature.mjs';
+          const patch=JSON.parse(fs.readFileSync('release-development/signature-v2.0.0.json','utf8'));
+          const certificate=fs.readFileSync('android/signing-certificate.sha256','utf8').trim();
+          if(patch.baseCommit!==process.env.BUILD_COMMIT || patch.version!=='2.0.0' || patch.certificateSHA256!==certificate)throw Error('Signature provenance mismatch');
+          const apk=applySignature(fs.readFileSync('reviewed-build/app-release-unsigned.apk'),patch);
+          const hash=createHash('sha256').update(apk).digest('hex');
+          if(apk.length!==patch.bytes || hash!==patch.signedSHA256)throw Error('Signed APK mismatch');
+          fs.writeFileSync('development-release/shike-v2.0.0-dev.4.apk',apk);
+          fs.writeFileSync('development-release/shike-v2.0.0-dev.4.sha256',hash+'  shike-v2.0.0-dev.4.apk\n');
+          JS
+          java -jar "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" verify --verbose --print-certs development-release/shike-v2.0.0-dev.4.apk > signature-check.txt
+          expected="$(tr -d '\r\n' < android/signing-certificate.sha256)"
+          grep -F "Signer #1 certificate SHA-256 digest: $expected" signature-check.txt
+      - name: Publish a development prerelease without updating stable
+        run: |
+          set -euo pipefail
+          cat > development-notes.md <<'NOTES'
+          拾课 v2.0.0 开发版 4：重新布局首页与课程作业，四个主入口为首页、课程作业、课程表、我的。
+
+          下载 shike-v2.0.0-dev.4.apk，内部版本 2.0.0 / 203，原签名覆盖安装。请先备份任务及课程表，不要卸载旧版。
+
+          首页集中创建/查看课表与截图、手动、语音、粘贴通知添加。课程作业顶部为即将截止、已逾期、暂无截止日期、已完成四个按钮，下方保留全部待办时间轴；点击分类筛选，再点击已选分类或“查看全部待办”恢复。我的页面集中设置、任务备份、日历和小组件入口。
+
+          新增原生桌面课程小组件：显示提醒课表（未选择时第一份课表）接下来三次课的时间地点，点击课程打开课表，支持手动刷新，保存/调课/重启及系统周期更新。可从“我的”申请添加，或长按桌面在小组件列表添加拾课课程表。系统周期最短约 30 分钟且受省电影响，不替代准确上课提醒。
+
+          单次调课可勾选自定义钟点，填写本次上课、下课时间及地点，其他周不受影响；提醒和小组件使用新的实际时间，撤销后恢复原安排。
+
+          56 项逻辑测试、完整浏览器回归 65 项通过（1 项旧截图缺样本跳过）；Android 14/15 各 23 项原生测试通过，含小组件 RemoteViews 布局和临时钟点/地点数据验证。ColorOS 桌面添加、缩放及后台刷新仍需真机验收。
+
+          已验证源码：0f38cfaa9c6d44523308ed6284ea1de99bf25de6。测试运行：https://github.com/xieyonghuan/student-task-assistant/actions/runs/40824514752 。稳定版与网页保持现状。
+          NOTES
+          gh release create v2.0.0-dev.4 development-release/shike-v2.0.0-dev.4.apk development-release/shike-v2.0.0-dev.4.sha256 --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title '拾课 v2.0.0 开发版 4' --notes-file development-notes.md

@@ -1,5 +1,22 @@
 .capture-title-compact { display: none; }
 
+/* Android surfaces share compact app typography, solid cards and consistent controls. */
+.native-app body { background:#f6f7f9;background-image:none; }
+.native-app .glass { background:#fff;backdrop-filter:none;box-shadow:none;border:1px solid #e8ebef; }
+.native-app .sidebar { border-radius:0;box-shadow:none;background:#fff; }
+.native-app .page-heading h1 { font-size:24px;letter-spacing:0; }
+.native-app .page-subtitle { font-size:12px;line-height:1.5; }
+.native-app .eyebrow { color:#8993a3;font-size:11px; }
+.native-app .button { box-shadow:none;border-radius:10px;min-height:44px; }
+.native-app .home-capture { grid-template-columns:minmax(0,1fr); }
+.native-app .home-capture .capture-art { display:none; }
+.native-app .home-capture .capture-copy { padding:20px; }
+.native-app .home-capture .capture-copy h2 { font-size:25px;line-height:1.4;letter-spacing:0; }
+.native-app .home-capture .capture-title-full { display:none; }
+.native-app .home-capture .capture-title-compact { display:inline; }
+.native-app .modal:not(.native-flow-screen) { background:#fff;border-radius:18px;box-shadow:0 12px 40px #1c2e4b26; }
+.native-app .task-card { border-radius:12px;box-shadow:none; }
+
 /* Android owns its system bars. Keep website installation chrome in the PWA. */
 .native-app .workspace { position: relative; display: flex; flex-direction: column; min-height: 100dvh; padding-top: 28px; }
 .native-app .workspace > * { flex-shrink: 0; }
@@ -103,3 +120,30 @@
   .native-app .home-followup > div { display: none; }
   .native-app .home-followup .text-button { width: 100%; min-height: 44px; justify-content: center; font-size: 13px; }
 }
+/* Four primary destinations and compact native surfaces. */
+.native-app .page-heading {margin-bottom:12px!important;gap:8px;}
+.native-app .page-heading h1 {font-size:23px;}
+.native-app .page-heading .eyebrow,.native-app .page-subtitle {display:none;}
+.native-app .native-footer {display:none!important;}
+.native-app .native-home-card {display:block;padding:16px;margin:0 0 12px;background:#fff;border:1px solid #e5eaf1;border-radius:16px;min-height:0;}
+.native-app .native-home-card h2 {font-size:16px;margin:0 0 12px;}
+.native-app .native-shortcuts {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+.native-app .native-shortcuts .button {min-height:48px;padding:10px 8px;font-size:13px;white-space:normal;}
+.native-app .home-followup.native-home-card {padding:6px 12px;}
+.native-app .mine-card {display:grid;gap:10px;}
+.native-app .mine-card p {font-size:13px;line-height:1.65;color:#6c7890;margin:0;}
+.native-app .assignment-tabs {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:12px;}
+.native-app .assignment-tab {display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:12px 2px;min-height:72px;border:1px solid #e1e6f0;border-radius:12px;background:#fff;color:#5d6d88;font:inherit;}
+.native-app .assignment-tab b {font-size:20px;color:#384c76;}.native-app .assignment-tab span {font-size:11px;}
+.native-app .assignment-tab.selected {background:#eaf0ff;border-color:#9aafe2;}
+.native-app .task-toolbar {padding:12px!important;gap:10px!important;}
+.native-app .page-summary,.native-app .intake-strip {display:none;}
+.native-app .task-card {padding:12px 10px;}
+.native-app .group-heading {padding:10px 12px;}
+.native-app .assignment-reset {margin-bottom:6px;}
+@media(max-width:650px){.native-app .native-home-card {padding:14px;}.native-app .native-shortcuts .icon{width:18px;height:18px;}}
+.native-app .course-change-target {display:grid;gap:10px;}
+.native-app .course-change-target .course-form-row {grid-template-columns:repeat(2,minmax(0,1fr));}
+.native-app .course-change-target [hidden] {display:none!important;}
+.native-app .empty-state {padding:24px 16px;min-height:160px;}
+.native-app .empty-illustration {display:none;}

@@ -20,7 +20,7 @@ async function nativeApp(page) {
     }};
   });
   await page.goto('./#/tasks');
-  await expect(page.getByRole('heading', {name:'全部待办',exact:true})).toBeVisible();
+  await expect(page.getByRole('heading', {name:'课程作业',exact:true})).toBeVisible();
 }
 async function add(page) {
   await page.getByRole('button', {name:'手动添加',exact:true}).click();
@@ -52,7 +52,7 @@ test('Android calendar permission is explicit, then save/edit/complete/restore/d
   await page.locator('[data-view="completed"]').click();
   await page.getByRole('button',{name:'恢复任务：修改后的数学作业',exact:true}).click();
   await expect.poll(async ()=>(await snapshot(page))[0]?.completed).toBe(false);
-  await page.locator('[data-view="all"]').click();
+  await page.locator('.sidebar [data-view="all"]').click();
   await page.getByRole('button',{name:'编辑任务：修改后的数学作业',exact:true}).click();
   await page.locator('#task-form [name="dueDate"]').fill('');
   await page.getByRole('button',{name:'保存修改',exact:true}).click();

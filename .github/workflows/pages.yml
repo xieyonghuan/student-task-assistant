@@ -1,9 +1,10 @@
 name: Publish study assistant
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+
+# Android v2 development: keep the deployed website at its existing version.
+# Publishing the web application requires an explicit manual dispatch.
 
 concurrency:
   group: github-pages
