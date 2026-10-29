@@ -66,6 +66,9 @@ test('one occurrence can move, cancel and undo without editing the semester rule
   await expect(page.locator('.course-block')).toHaveCount(0);await expect(page.locator('.course-changes')).toContainText('停课');
   await page.locator('.course-all>summary').click();await page.getByRole('button',{name:'撤销',exact:true}).click();await expect(page.locator('.course-block')).toHaveCount(1);await expect(page.locator('.course-block')).toContainText('A201');
 });
+test('one-off custom clock and room are stored without changing recurring course times',async({page})=>{
+  await app(page);await page.locator('.course-block').first().click();const d=page.locator('dialog[open]').last();await d.locator('[name=customTime]').check();await d.locator('[name=startTime]').fill('13:15');await d.locator('[name=endTime]').fill('14:35');await d.locator('[name=room]').fill('临时教室');await d.getByRole('button',{name:'保存本次变更'}).click();await expect(d).toHaveCount(0);const saved=await page.evaluate(()=>window.__courseState.tables[0]);expect(saved.changes[0]).toMatchObject({startTime:'13:15',endTime:'14:35',room:'临时教室'});expect(saved.courses[0]).toMatchObject({room:'A201',start:1,end:2});
+});
 test('save failure keeps the editor and existing course data available',async({page})=>{
   await app(page);await page.evaluate(()=>window.__failCourseSave=true);
   await page.locator('.course-all>summary').click();await page.locator('.course-row').first().click();const d=page.locator('dialog[open]').last();await d.locator('[name=name]').fill('修改后的课程');await d.getByRole('button',{name:'保存课程',exact:true}).click();

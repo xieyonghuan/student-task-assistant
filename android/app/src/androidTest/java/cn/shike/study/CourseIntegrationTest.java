@@ -100,6 +100,19 @@ public class CourseIntegrationTest {
         try { CourseEngine.validate(state); fail("Orphaned change must fail"); } catch (IllegalArgumentException expected) { }
         table.put("changes", new JSONArray()); CourseEngine.validate(state);
     }
+    @Test public void widgetUsesMovedExactTimeAndLocationWithoutChangingOtherWeeks() throws Exception {
+        JSONObject state=fixture(),table=CourseEngine.table(state,"table-test");
+        JSONObject change=new JSONObject().put("courseId","course-test").put("date","2026-10-26").put("type","move").put("targetDate","2026-10-27").put("start",1).put("end",2).put("startTime","13:15").put("endTime","14:35").put("room","临时教室");
+        table.getJSONArray("changes").put(change);CourseEngine.validate(state);
+        long now=LocalDate.parse("2026-10-26").atStartOfDay(CourseEngine.ZONE).toInstant().toEpochMilli();
+        JSONObject preview=CourseWidget.preview(state,now),row=preview.getJSONArray("rows").getJSONObject(0);
+        assertEquals("临时教室",row.getString("room"));assertEquals(80*60000L,row.getLong("finish")-row.getLong("begin"));assertTrue(row.getBoolean("customTime"));
+        android.view.View view=CourseWidget.views(context,preview,now).apply(context,null);
+        assertTrue(((android.widget.TextView)view.findViewById(R.id.widget_first)).getText().toString().contains("13:15–14:35"));
+        JSONObject normal=CourseEngine.occurrences(table,LocalDate.parse("2026-11-09"),LocalDate.parse("2026-11-09")).getJSONObject(0);assertEquals("A201",normal.getString("room"));assertFalse(normal.optBoolean("customTime"));
+        change.put("endTime","12:00");try{CourseEngine.validate(state);fail("Invalid exact clock range");}catch(IllegalArgumentException expected){}
+        assertEquals(0,CourseWidget.preview(CourseEngine.empty(),now).getJSONArray("rows").length());
+    }
     @Test public void actualAlarmsPermissionCancellationReceiptsAndStaleDeliveryWork() throws Exception {
         shell("pm grant cn.shike.study android.permission.POST_NOTIFICATIONS");
         shell("appops set cn.shike.study SCHEDULE_EXACT_ALARM allow");

@@ -182,6 +182,12 @@ public final class MainActivity extends Activity {
                 picker.show();break;
             }
             case "courseLoad": background(reply, () -> new CourseStore(this).read()); break;
+            case "courseWidgetPin": {
+                android.appwidget.AppWidgetManager manager=android.appwidget.AppWidgetManager.getInstance(this);
+                boolean supported=manager.isRequestPinAppWidgetSupported();
+                if(supported)manager.requestPinAppWidget(new android.content.ComponentName(this,CourseWidget.class),null,null);
+                reply.send(new JSONObject().put("supported",supported),null);break;
+            }
             case "courseSave": background(reply, () -> {
                 JSONObject saved = new CourseStore(this).replace(args.getJSONObject("state"), args.getLong("revision"));
                 new CourseAlarms(this).rebuild(); return saved;

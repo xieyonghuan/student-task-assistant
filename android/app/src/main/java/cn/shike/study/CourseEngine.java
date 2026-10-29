@@ -92,6 +92,7 @@ final class CourseEngine {
                     LocalDate target = LocalDate.parse(change.getString("targetDate"));
                     require(target.getYear() >= 2000 && target.getYear() <= 2200, "调课日期无效。");
                     int start = number(change, "start", 1, periods.length()); number(change, "end", start, periods.length()); text(change, "room", 160);
+                    if(change.has("startTime")||change.has("endTime"))require(LocalTime.parse(change.getString("startTime")).isBefore(LocalTime.parse(change.getString("endTime"))),"本次下课时间应晚于上课时间。");
                 }
             }
         }
@@ -132,7 +133,16 @@ final class CourseEngine {
                     if (!cancelled) { actual = LocalDate.parse(change.getString("targetDate")); start = change.getInt("start"); end = change.getInt("end"); room = change.optString("room"); moved = true; }
                     break;
                 }
-                if (!cancelled && !actual.isBefore(from) && !actual.isAfter(through)) result.add(occurrence(t, course, original, actual, start, end, room, moved));
+                if (!cancelled && !actual.isBefore(from) && !actual.isAfter(through)) {
+                    JSONObject value=occurrence(t, course, original, actual, start, end, room, moved);
+                    for(int k=0;k<changes.length();k++){
+                        JSONObject change=changes.getJSONObject(k);
+                        if(course.getString("id").equals(change.getString("courseId"))&&original.toString().equals(change.getString("date"))&&change.has("startTime")&&"move".equals(change.getString("type"))){
+                            value.put("customTime",true).put("begin",actual.atTime(LocalTime.parse(change.getString("startTime"))).atZone(ZONE).toInstant().toEpochMilli()).put("finish",actual.atTime(LocalTime.parse(change.getString("endTime"))).atZone(ZONE).toInstant().toEpochMilli());break;
+                        }
+                    }
+                    result.add(value);
+                }
             }
         }
         result.sort(Comparator.comparingLong(o -> o.optLong("begin")));

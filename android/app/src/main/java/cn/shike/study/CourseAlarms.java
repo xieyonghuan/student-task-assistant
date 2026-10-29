@@ -75,6 +75,7 @@ final class CourseAlarms {
         alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending);
     }
     void rebuild() throws Exception {
+        CourseWidget.refresh(context);
         synchronized (CourseStore.LOCK) {
             Set<String> old = new HashSet<>(prefs.getStringSet("scheduled", Collections.emptySet()));
             for (String key : old) { PendingIntent p = pending(FIRE, key); alarms.cancel(p); p.cancel(); }
